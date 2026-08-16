@@ -1,0 +1,42 @@
+services:
+  - type: web
+    name: palmai
+    runtime: python
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.11
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: GEMINI_MODEL
+        value: gemini-3.5-flash-lite
+      # SUPABASE_URL / SUPABASE_KEY intentionally omitted — main.py already
+      # has working defaults baked in. Add them here (or in the Render
+      # dashboard) only if you want to override those defaults, e.g. after
+      # rotating the key. Leaving them out of this file means Render won't
+      # create an empty env var that would otherwise shadow the fallback.
+      - key: SUPABASE_TABLE
+        value: palm_reports
+      - key: SUPABASE_BUCKET
+        value: palm-images
+      - key: ALLOWED_ORIGINS
+        value: "*"
+      # Razorpay Rs 9 "unlock full report" flow. RAZORPAY_PAYMENT_LINK
+      # already defaults to the configured Payment Page in main.py, so it's
+      # optional here. RAZORPAY_KEY_SECRET is NOT optional for production —
+      # without it the payment callback can't verify Razorpay's signature
+      # and falls back to trusting the redirect's status param, which is
+      # fine for testing but not tamper-proof. Get it from Razorpay
+      # Dashboard > Settings > API Keys.
+      - key: RAZORPAY_KEY_SECRET
+        sync: false
+      - key: REPORT_PRICE_INR
+        value: "9"
+      # Set this to your deployed Render URL once you know it (e.g.
+      # https://palmai.onrender.com) so /payment/callback redirects the
+      # browser back to the right place. Also set this exact URL + "/payment/callback"
+      # as the Payment Page's "Redirect URL" in the Razorpay Dashboard.
+      - key: FRONTEND_URL
+        value: "/"
