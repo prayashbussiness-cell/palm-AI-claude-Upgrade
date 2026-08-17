@@ -456,6 +456,34 @@ function escapeHtml(str) {
   return div.innerHTML;
 }
 
+// FastAPI sends error detail as a plain string for our own HTTPExceptions,
+// but as a LIST of {loc, msg, type} objects for its own built-in request
+// validation errors (e.g. a required field missing entirely). Handle both
+// shapes so the person always sees real text instead of "[object Object]".
+function formatErrorDetail(detail) {
+  if (typeof detail === "string") return detail;
+
+  if (Array.isArray(detail)) {
+    return detail
+      .map((item) => {
+        if (typeof item === "string") return item;
+        if (item && typeof item === "object") {
+          const field = Array.isArray(item.loc) ? item.loc[item.loc.length - 1] : "";
+          const msg = item.msg || "Invalid value.";
+          return field ? `${field}: ${msg}` : msg;
+        }
+        return "Invalid request.";
+      })
+      .join(" ");
+  }
+
+  if (detail && typeof detail === "object") {
+    return detail.msg || JSON.stringify(detail);
+  }
+
+  return "Something went wrong. Please try again.";
+}
+
 // ---------------------------------------------------------------------------
 // Unlock / download page hand-off
 // ---------------------------------------------------------------------------
@@ -511,6 +539,7 @@ form.addEventListener("submit", async (e) => {
   const formData = new FormData();
   formData.append("name", fields.name.value.trim());
   formData.append("email", fields.email.value.trim());
+  formData.append("phone", fields.phone.value.trim());
   formData.append("dob", fields.dob.value);
   formData.append("place", fields.place.value.trim());
   formData.append("facePhoto", selectedFiles.facePhoto);
@@ -527,7 +556,7 @@ form.addEventListener("submit", async (e) => {
       let detail = "Something went wrong. Please try again.";
       try {
         const errJson = await response.json();
-        if (errJson && errJson.detail) detail = errJson.detail;
+        if (errJson && errJson.detail) detail = formatErrorDetail(errJson.detail);
       } catch (_) {
         /* ignore parse errors, use default message */
       }
