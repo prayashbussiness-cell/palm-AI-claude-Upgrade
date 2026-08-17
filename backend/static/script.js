@@ -16,7 +16,6 @@
 // ---------------------------------------------------------------------------
 
 const API_BASE_URL = window.PALMAI_API_BASE_URL || "";
-const STATUS_POLL_INTERVAL_MS = 4000;
 
 // ---------------------------------------------------------------------------
 // Element references
@@ -44,7 +43,6 @@ const paywallSection = document.getElementById("paywallSection");
 const unlockBtn = document.getElementById("unlockBtn");
 const unlockAmountEl = document.getElementById("unlockAmount");
 const paymentWaiting = document.getElementById("paymentWaiting");
-const checkPaymentBtn = document.getElementById("checkPaymentBtn");
 
 const downloadSection = document.getElementById("downloadSection");
 const downloadPdfBtn = document.getElementById("downloadPdfBtn");
@@ -56,6 +54,7 @@ const progressItems = Array.from(progressStepsEl.querySelectorAll("li"));
 const fields = {
   name: document.getElementById("name"),
   email: document.getElementById("email"),
+  phone: document.getElementById("phone"),
   dob: document.getElementById("dob"),
   place: document.getElementById("place"),
   confirm: document.getElementById("confirm"),
@@ -70,7 +69,6 @@ let selectedFiles = {
 };
 
 let currentReportId = null;
-let pollTimer = null;
 let progressTimer = null;
 
 // ---------------------------------------------------------------------------
@@ -332,6 +330,19 @@ function validateForm() {
     }
   }
 
+  if (!fields.phone.value.trim()) {
+    setFieldError("err-phone", "Phone number is required.");
+    fields.phone.classList.add("invalid");
+    isValid = false;
+  } else {
+    const digitsOnly = fields.phone.value.replace(/\D/g, "");
+    if (digitsOnly.length < 7) {
+      setFieldError("err-phone", "Please enter a valid phone number.");
+      fields.phone.classList.add("invalid");
+      isValid = false;
+    }
+  }
+
   if (!fields.dob.value) {
     setFieldError("err-dob", "Please pick your date of birth.");
     dobDisplay.classList.add("invalid");
@@ -428,7 +439,6 @@ function renderResult(data) {
 
 function setPaidState(paid) {
   if (paid) {
-    stopPolling();
     lockedNotice.hidden = true;
     paywallSection.hidden = true;
     paymentWaiting.hidden = true;
@@ -447,33 +457,13 @@ function escapeHtml(str) {
 }
 
 // ---------------------------------------------------------------------------
-// Payment polling
+// Unlock / download page hand-off
 // ---------------------------------------------------------------------------
 
-function startPolling() {
-  stopPolling();
-  pollTimer = setInterval(checkPaymentStatus, STATUS_POLL_INTERVAL_MS);
-}
-
-function stopPolling() {
-  if (pollTimer) {
-    clearInterval(pollTimer);
-    pollTimer = null;
-  }
-}
-
-async function checkPaymentStatus() {
-  if (!currentReportId) return;
-  try {
-    const res = await fetch(`${API_BASE_URL}/report/${currentReportId}/status`);
-    if (!res.ok) return;
-    const data = await res.json();
-    if (data.paid) {
-      setPaidState(true);
-    }
-  } catch (_) {
-    /* network hiccup while polling — try again next tick */
-  }
+function downloadPageUrl() {
+  const email = encodeURIComponent(fields.email.value.trim());
+  const phone = encodeURIComponent(fields.phone.value.trim());
+  return `download.html?email=${email}&phone=${phone}`;
 }
 
 unlockBtn.addEventListener("click", async () => {
@@ -485,14 +475,10 @@ unlockBtn.addEventListener("click", async () => {
       window.open(data.payment_url, "_blank", "noopener");
     }
   } catch (_) {
-    /* fall through — polling/manual check still available */
+    /* the manual "I've completed the payment" link below still works */
   }
+  document.getElementById("goToDownloadBtn").href = downloadPageUrl();
   paymentWaiting.hidden = false;
-  startPolling();
-});
-
-checkPaymentBtn.addEventListener("click", () => {
-  checkPaymentStatus();
 });
 
 downloadPdfBtn.addEventListener("click", () => {
@@ -575,7 +561,6 @@ newReportBtn.addEventListener("click", () => {
   dobHidden.value = "";
   dobDisplay.value = "";
   currentReportId = null;
-  stopPolling();
 
   document.querySelectorAll(".preview-img").forEach((img) => {
     img.hidden = true;
@@ -612,13 +597,10 @@ async function restoreFromUrlIfNeeded() {
     const data = await res.json();
     renderResult(data);
 
-    if (!data.paid && params.get("payment_error")) {
+    if (!data.paid) {
+      // Came back before payment finished, or this was just a shared link.
+      document.getElementById("goToDownloadBtn").href = downloadPageUrl();
       paymentWaiting.hidden = false;
-      startPolling();
-    } else if (!data.paid) {
-      // Came back before Razorpay's redirect finished / webhook landed.
-      paymentWaiting.hidden = false;
-      startPolling();
     }
   } catch (_) {
     /* if this fails, the person can just fill the form again */

@@ -38,6 +38,12 @@
             <span class="error-msg" id="err-email"></span>
           </div>
 
+          <div class="field">
+            <label for="phone">Phone Number</label>
+            <input type="tel" id="phone" name="phone" placeholder="e.g. 9876543210" autocomplete="tel" />
+            <span class="error-msg" id="err-phone"></span>
+          </div>
+
           <div class="field field-full">
             <label for="dobDisplay">Date of Birth</label>
             <div class="calendar-input-wrap" id="calendarInputWrap">
@@ -160,12 +166,10 @@
         <button class="submit-btn unlock-btn" id="unlockBtn">
           <span class="btn-label">Unlock Full Report &mdash; <span id="unlockAmount">&#8377;9</span></span>
         </button>
-        <p class="paywall-note">Secure payment via Razorpay. Your full PDF unlocks automatically after payment.</p>
+        <p class="paywall-note">Secure payment via Razorpay. After paying, come back and tap the button below to get your PDF.</p>
 
         <div class="payment-waiting" id="paymentWaiting" hidden>
-          <div class="mini-spinner"></div>
-          <p>Waiting for payment confirmation&hellip;</p>
-          <button class="secondary-btn" id="checkPaymentBtn">I've completed the payment</button>
+          <a class="secondary-btn" id="goToDownloadBtn" href="download.html">I've completed the payment &mdash; Get my PDF</a>
         </div>
       </div>
 

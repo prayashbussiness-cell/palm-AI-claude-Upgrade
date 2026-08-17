@@ -504,6 +504,10 @@ input.invalid {
   font-size: 0.92rem;
   cursor: pointer;
   transition: background 0.2s ease, border-color 0.2s ease;
+  display: block;
+  text-align: center;
+  text-decoration: none;
+  box-sizing: border-box;
 }
 
 .secondary-btn:hover {
@@ -873,6 +877,35 @@ input.invalid {
   flex-direction: column;
   gap: 0;
   margin-top: 8px;
+}
+
+/* ---------------------------------- Download lookup page --------------------- */
+
+.lookup-status {
+  margin-top: 16px;
+  border-radius: var(--radius-md);
+  padding: 14px 16px;
+  font-size: 0.87rem;
+  line-height: 1.6;
+}
+
+.lookup-status-info {
+  background: rgba(212, 175, 106, 0.1);
+  border: 1px solid rgba(212, 175, 106, 0.35);
+  color: var(--ink);
+}
+
+.lookup-status-success {
+  background: var(--solution-bg);
+  border: 1px solid rgba(111, 215, 154, 0.4);
+  color: var(--solution);
+  font-weight: 600;
+}
+
+.lookup-status-error {
+  background: var(--error-bg);
+  border: 1px solid rgba(239, 134, 134, 0.4);
+  color: var(--error);
 }
 
 /* ---------------------------------- Footer ------------------------------ */

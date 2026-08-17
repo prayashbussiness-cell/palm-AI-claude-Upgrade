@@ -215,3 +215,17 @@ def clean_plain_text(markdown_text: str) -> str:
     """Full report with [[PROBLEM]]/[[SOLUTION]] markers removed, for any
     plain-text fallback display."""
     return strip_markers(markdown_text)
+
+
+def normalize_phone(phone: str) -> str:
+    """
+    Normalize a phone number for matching purposes: strip everything but
+    digits, then keep the last 10 digits so "9876543210", "+91 9876543210",
+    and "091-9876543210" all normalize to the same value.
+    """
+    digits = re.sub(r"\D", "", phone or "")
+    return digits[-10:] if len(digits) >= 10 else digits
+
+
+def normalize_email(email: str) -> str:
+    return (email or "").strip().lower()

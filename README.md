@@ -68,65 +68,84 @@ origin in production, `script.js` calls the API with relative URLs (e.g.
 
 ---
 
-## 2. How the paywall flow works
+## 2. How the paywall + download flow works
 
-1. **`POST /analyze`** — user submits name, DOB, place, and a face photo.
-   The backend calls Gemini (birth details only), which returns markdown
-   with `[[PROBLEM]]...[[/PROBLEM]]` / `[[SOLUTION]]...[[/SOLUTION]]`
-   markers around key sentences, plus a parseable Rashi line. The backend:
+1. **`POST /analyze`** — user submits name, email, **phone**, DOB, place,
+   and a face photo. The backend calls Gemini (birth details only), which
+   returns markdown with `[[PROBLEM]]...[[/PROBLEM]]` /
+   `[[SOLUTION]]...[[/SOLUTION]]` markers around key sentences, plus a
+   parseable Rashi line. The backend:
    - extracts the **Rashi** (Moon sign),
-   - builds a list of **issue chips** ("Career Challenges Detected", etc.)
-     from which sections actually contain a problem,
-   - builds a **free teaser**: the Executive Summary + Basic Astrological
+   - builds a list of **issue chips** ("Career Challenges Detected", etc.),
+   - builds a **free teaser**: Executive Summary + Basic Astrological
      Details in full, then further sections up to ~30% of the remaining
-     report's length, cut only at paragraph/section boundaries so a
-     sentence is never shown half-cut. Everything past that point is
-     simply **not sent to the browser** — it can't be revealed by
-     inspecting the page source,
-   - generates the **full PDF** (with the same red/green colouring, Rashi
-     highlighted instead of exact birth time) and stores it server-side,
+     report's length, cut only at paragraph/section boundaries. Everything
+     past that point is simply **not sent to the browser**,
+   - generates the **full PDF** and stores it server-side,
    - creates a `report_id` and a Razorpay payment URL
      (`RAZORPAY_PAYMENT_LINK?reference_id=<report_id>`),
-   - saves the user's details + face photo URL + full report to Supabase
-     (best-effort; a Supabase outage never blocks the user's report).
-   - Returns the teaser + Rashi + issue chips + `payment_url` — never the
-     full markdown or a PDF path.
+   - saves the user's details (name, normalized email, normalized phone,
+     dob, place), face photo URL, Rashi, and the full report text to
+     **Supabase** — this is the durable source of truth used later by the
+     recovery download page, since Render's local disk is ephemeral.
 
 2. User clicks **"Unlock Full Report — Rs 9"**, which opens the Razorpay
-   Payment Page in a new tab and starts polling
-   `GET /report/{id}/status` every few seconds.
+   Payment Page in a new tab, and a **"I've completed the payment"** link
+   appears pointing to `download.html` (pre-filled with the email/phone
+   they just submitted).
 
 3. After paying, Razorpay redirects the browser to whatever **Redirect
-   URL** is configured for that Payment Page in the Razorpay Dashboard.
-   Point that at `https://<your-domain>/payment/callback` — Razorpay
-   appends `razorpay_payment_id`, `razorpay_payment_link_id`,
-   `razorpay_payment_link_reference_id` (this is your `report_id`),
-   `razorpay_payment_link_status`, and `razorpay_signature` as query
-   params. `/payment/callback`:
-   - verifies the signature with `RAZORPAY_KEY_SECRET` (HMAC-SHA256 over
-     `payment_link_id|reference_id|status|payment_id`, Razorpay's
-     documented algorithm),
-   - marks that `report_id` as paid in `store.py`,
-   - redirects the browser back to `FRONTEND_URL?report_id=<id>&paid=1`.
+   URL** is configured for that Payment Page — set this to
+   `https://<your-domain>/payment/callback`. That route:
+   - verifies the signature with `RAZORPAY_KEY_SECRET`,
+   - flips `paid` to `true` for that `report_id` in **both** the local
+     store and the matching Supabase row,
+   - redirects the browser to `download.html?paid=1`.
 
-4. The frontend (via the polling loop, or by reading `?report_id=...` on
-   page load) sees `paid: true` and reveals **"Download Full PDF"**, which
-   hits the gated `GET /report/{id}/download` route. PDFs are **never**
-   reachable by a guessed/static filename — only through this route, which
-   returns `402 Payment Required` until `paid` is true.
+4. **`download.html`** (a standalone page, linked from the result card and
+   also the Razorpay redirect target) asks for **email + phone number**.
+   `POST /download/lookup`:
+   - normalizes both (lowercase/trimmed email; last-10-digits phone, so
+     `+91 98765 43210` and `9876543210` match),
+   - queries Supabase for the **most recent** row matching that email +
+     phone where `paid = true`,
+   - streams the PDF back. If the on-disk PDF from the original request
+     is gone (e.g. a Render redeploy wiped the ephemeral disk), it's
+     **regenerated on the fly** from the report text stored in Supabase —
+     so downloads keep working even across redeploys.
+   - If no paid row matches, returns a 404 with a clear "we couldn't find
+     a completed payment for these details" message.
+
+This means the *download* step is deliberately decoupled from any
+particular browser/device/session — someone can pay on their phone and
+retrieve the PDF later from a laptop, as long as they enter the same
+email + phone they submitted originally.
 
 **Important — one manual setup step:** Razorpay's redirect-back behaviour
-must be configured **in the Razorpay Dashboard**, not in this code:
-Payment Pages → your Rs 9 page → **Settings → Redirect URL** → set to
-`https://<your-deployed-domain>/payment/callback`. Until you set this, the
-"I've completed the payment" button and the automatic status polling still
-work as a fallback (the user can manually confirm), but the automatic
-redirect-back won't fire.
+must be configured **in the Razorpay Dashboard**: Payment Pages → your Rs
+9 page → **Settings → Redirect URL** → set to
+`https://<your-deployed-domain>/payment/callback`. Until you set this,
+paying still works — the person just needs to manually click "I've
+completed the payment" on the result page (or visit `download.html`
+directly) instead of being auto-redirected.
 
 If `RAZORPAY_KEY_SECRET` is left unset, the callback still works but
 trusts the `status=paid` query param instead of cryptographically
-verifying it — fine for testing, but set the real key secret (Dashboard →
-Settings → API Keys) before taking real payments.
+verifying it — fine for testing, but set the real key secret before
+taking real payments.
+
+**Security note on the Supabase `paid` column:** the backend needs to be
+able to flip `paid` to `true` after verifying a payment, which requires
+an `UPDATE` policy in `supabase_setup.sql`. That policy is scoped to only
+the `paid` / `pdf_filename` / `razorpay_payment_id` columns via a Postgres
+column-level `GRANT`, so the publishable key can't rewrite anyone's name,
+email, or report text — but because that key is designed to be
+embeddable/public, someone holding it could in principle call Supabase's
+REST API directly and flip their **own** row's `paid` to `true` without
+actually paying (RLS can't verify a Razorpay signature). This is an
+acceptable trade-off while testing; `supabase_setup.sql` includes the
+exact steps to harden this (switch to a secret key + drop the anon update
+policy) before relying on this for real revenue.
 
 ---
 
@@ -244,16 +263,14 @@ directly by this same FastAPI app.
 
 Either way, you get **one Render URL** that serves the whole app.
 
-Render's free tier disks are ephemeral — `uploads/`, `reports/`, and
-`reports/store.json` (which tracks paid status) are cleared on every
-deploy/restart. That's fine for `uploads/` (temp-only, already deleted per
-request). For `reports/` and the paid-status store, that means an **unpaid
-report_id created right before a redeploy will be lost** — acceptable for
-an MVP, but if you need durability across deploys, either add a Render
-persistent Disk mounted at `backend/reports/`, or move `store.py`'s
-persistence into the `palm_reports` Supabase table (it already has a
-`paid` column ready for this) and update `/payment/callback` to also
-`UPDATE palm_reports SET paid = true WHERE report_id = ...`.
+Render's free tier disks are ephemeral — `uploads/` and `reports/*.pdf`
+are cleared on every deploy/restart. That's fine for `uploads/` (temp-only,
+already deleted per request). For `reports/`, it's also fine: **Supabase is
+the durable source of truth**, and `/download/lookup` automatically
+regenerates a missing PDF on the fly from the report text stored there. If
+Supabase isn't configured at all, `/download/lookup` won't work (it needs
+Supabase to look records up by email/phone) — the in-session `/report/{id}`
+flow still works as a fallback for as long as the local disk survives.
 
 **If you do override `SUPABASE_URL` / `SUPABASE_KEY`:** copy them fresh
 from Supabase → **Project Settings → API Keys** straight into Render's env
@@ -268,17 +285,19 @@ at startup.
 | Route | Method | Purpose |
 |---|---|---|
 | `/health` | GET | Health check |
-| `/analyze` | POST | Submit birth details + face photo → generates report, returns teaser + payment_url |
+| `/analyze` | POST | Submit birth details (incl. phone) + face photo → generates report, returns teaser + payment_url |
 | `/report/{id}` | GET | Public view of a report (teaser, Rashi, issues, paid flag, payment_url) — used to restore state after the Razorpay redirect |
-| `/report/{id}/status` | GET | `{ "paid": true/false }` — used for polling |
-| `/report/{id}/download` | GET | Full PDF download — `402` until paid |
-| `/payment/callback` | GET | Razorpay's redirect target after a payment attempt; verifies signature, marks paid, redirects back to the site |
+| `/report/{id}/status` | GET | `{ "paid": true/false }` — same-session convenience check |
+| `/report/{id}/download` | GET | Full PDF download for that exact report_id — `402` until paid |
+| `/payment/callback` | GET | Razorpay's redirect target after a payment attempt; verifies signature, marks paid in Supabase + local store, redirects to `download.html` |
+| `/download/lookup` | POST | `{ email, phone }` → finds the latest **paid** row in Supabase matching both, streams the PDF back (regenerating it if the on-disk copy is gone) |
 
 ---
 
 ## 9. How the report + teaser + PDF pipeline works
 
-- `/analyze` receives the form (name, dob, place) + the face photo.
+- `/analyze` receives the form (name, email, phone, dob, place) + the face
+  photo.
 - Only the birth details (no images) are sent to Gemini, which returns
   markdown containing `[[PROBLEM]]`/`[[SOLUTION]]` markers and a Rashi
   line.
@@ -289,11 +308,15 @@ at startup.
   red/green colouring and the Rashi highlighted in place of exact
   birth-time details (no time of birth is collected at all any more).
 - The face photo is uploaded to the `palm-images` Supabase Storage bucket,
-  and a row (report_id, name, email, dob, place, face image URL, report
-  text, paid flag) is inserted into the `palm_reports` table — best
-  effort; if Supabase is unreachable, the user still gets their report,
-  and the failure is logged.
+  and a row (report_id, name, normalized email, normalized phone, dob,
+  place, face image URL, Rashi, report text, pdf_filename, paid flag) is
+  inserted into the `palm_reports` table — best effort; if Supabase is
+  unreachable, the user still gets their report, and the failure is
+  logged.
 - The local temp copy of the face photo is deleted after each request
   either way.
-- The generated PDF is kept **only** on the server and served exclusively
-  through the paid-gated `/report/{id}/download` route.
+- The generated PDF is kept on the server and served either through the
+  same-session `/report/{id}/download` route, or — the more robust path —
+  through `/download.html` → `/download/lookup`, which finds the report by
+  email + phone in Supabase and regenerates the PDF from the stored report
+  text if the original file is gone.

@@ -11,12 +11,18 @@ Responsibilities:
 - Build a free ~30% "teaser" preview (problems highlighted red, solutions
   highlighted green) and a full paid PDF (same colouring) from the result.
 - Gate the full PDF behind a Rs 9 Razorpay Payment Page; verify the
-  payment callback and unlock the download once payment is confirmed.
+  payment callback and mark the report paid in Supabase.
 - Save the face photo to Supabase Storage and insert a row (user details +
-  face image URL + report text) into a Supabase table.
+  face image URL + report text + paid flag) into a Supabase table.
+- Serve a standalone recovery page (static/download.html -> POST
+  /download/lookup) that looks up the latest PAID report for a given
+  email + phone number and streams the PDF back, regenerating it on the
+  fly from the stored report text if the on-disk copy is gone (e.g. after
+  a Render redeploy wiped the ephemeral disk).
 """
 
 import os
+import re
 import uuid
 import logging
 from datetime import datetime
@@ -25,7 +31,8 @@ import aiofiles
 from fastapi import FastAPI, Form, File, UploadFile, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import JSONResponse, FileResponse, RedirectResponse
+from fastapi.responses import JSONResponse, FileResponse, RedirectResponse, Response
+from pydantic import BaseModel
 from google import genai
 from google.genai import types as genai_types
 from supabase import create_client, Client
@@ -82,8 +89,11 @@ RAZORPAY_PAYMENT_LINK = os.environ.get(
 )
 RAZORPAY_KEY_SECRET = os.environ.get("RAZORPAY_KEY_SECRET", "")
 REPORT_PRICE_INR = int(os.environ.get("REPORT_PRICE_INR", "9"))
-# Where to send the browser after /payment/callback finishes. Leave unset to
-# just redirect back to "/" on this same service.
+# --- Where /payment/callback sends the browser after verifying a payment ---
+# Leave as "/" for local development / single-origin deployments (the
+# callback will redirect to the relative path "/download.html" on this
+# same service). In production you can instead set this to your full
+# deployed URL, e.g. https://palmai.onrender.com.
 FRONTEND_URL = os.environ.get("FRONTEND_URL", "/")
 
 # Allow the frontend origin(s) to be configured via env var (comma separated).
@@ -228,17 +238,24 @@ async def generate_astrology_report(name: str, dob: str, place: str) -> str:
 def save_to_supabase(
     name: str,
     email: str,
+    phone: str,
     dob: str,
     place: str,
     face_photo_path: str,
     report_markdown: str,
     report_id: str,
+    rashi: str,
+    pdf_filename: str,
 ) -> None:
     """
     Uploads the face photo to Supabase Storage and inserts a row into the
     Supabase table with the user's details, the public face image URL, and
     the generated report. Failures here are logged but never block the
     response to the user — the report was already generated successfully.
+
+    Supabase (not the local JSON store) is the durable source of truth for
+    the `/download/lookup` recovery flow, since Render's local disk is
+    ephemeral and can be wiped on redeploy.
     """
     if supabase is None:
         logger.warning("Supabase not configured; skipping save.")
@@ -259,16 +276,33 @@ def save_to_supabase(
             {
                 "report_id": report_id,
                 "name": name,
-                "email": email,
+                "email": report_utils.normalize_email(email),
+                "phone": report_utils.normalize_phone(phone),
                 "dob": dob,
                 "place": place,
                 "face_image_url": face_image_url,
                 "report": report_markdown,
+                "rashi": rashi,
+                "pdf_filename": pdf_filename,
                 "paid": False,
             }
         ).execute()
     except Exception:
         logger.exception("Failed to save report to Supabase")
+
+
+def mark_paid_in_supabase(report_id: str, payment_id: str) -> None:
+    """Best-effort: flip the matching Supabase row's `paid` flag once a
+    payment has been verified. This is what makes /download/lookup able to
+    find the report later, from any device/session."""
+    if supabase is None:
+        return
+    try:
+        supabase.table(SUPABASE_TABLE).update(
+            {"paid": True, "razorpay_payment_id": payment_id}
+        ).eq("report_id", report_id).execute()
+    except Exception:
+        logger.exception("Failed to mark report paid in Supabase (report_id=%s)", report_id)
 
 
 def _mime_type_from_ext(ext: str) -> str:
@@ -304,6 +338,7 @@ async def health():
 async def analyze(
     name: str = Form(...),
     email: str = Form(...),
+    phone: str = Form(...),
     dob: str = Form(...),
     place: str = Form(...),
     facePhoto: UploadFile = File(...),
@@ -313,7 +348,9 @@ async def analyze(
     Vedic astrology report from name + date of birth + place (no time of
     birth, no image analysis), builds the free teaser + the full paid PDF,
     and returns the teaser plus a Razorpay unlock link. The face photo is
-    saved to Supabase for the user's record only.
+    saved to Supabase for the user's record only. Email + phone are also
+    stored so the person can later look their paid report up on
+    /download.html without needing to stay on this device/session.
     """
     # --- Server-side validation (mirrors frontend validation) ---
     errors = []
@@ -321,6 +358,8 @@ async def analyze(
         errors.append("Full name is required.")
     if not email or not email.strip():
         errors.append("Email address is required.")
+    if not phone or len(re.sub(r"\D", "", phone)) < 7:
+        errors.append("A valid phone number is required.")
     if not dob or not dob.strip():
         errors.append("Date of birth is required.")
     if not place or not place.strip():
@@ -388,6 +427,7 @@ async def analyze(
             {
                 "name": name.strip(),
                 "email": email.strip(),
+                "phone": phone.strip(),
                 "rashi": rashi,
                 "issues": issues,
                 "teaser_html": teaser_html,
@@ -402,11 +442,14 @@ async def analyze(
         save_to_supabase(
             name=name.strip(),
             email=email.strip(),
+            phone=phone.strip(),
             dob=dob.strip(),
             place=place.strip(),
             face_photo_path=face_path,
             report_markdown=report_markdown,
             report_id=report_id,
+            rashi=rashi,
+            pdf_filename=pdf_filename,
         )
 
         record = store.get_report(report_id)
@@ -468,9 +511,9 @@ async def payment_callback(request: Request):
     Razorpay redirects the browser here after a payment attempt on the
     Rs 9 unlock Payment Page (configure this URL as the page's "Redirect
     URL" in the Razorpay Dashboard). Verifies the signature (when
-    RAZORPAY_KEY_SECRET is set), marks the matching report as paid, then
-    sends the browser back to the site so the frontend can offer the
-    download.
+    RAZORPAY_KEY_SECRET is set), marks the matching report as paid in both
+    the local store and Supabase, then sends the browser to the recovery
+    download page so the person can fetch their PDF by email + phone.
     """
     params = request.query_params
     payment_id = params.get("razorpay_payment_id", "")
@@ -479,9 +522,11 @@ async def payment_callback(request: Request):
     status_param = params.get("razorpay_payment_link_status", "")
     signature = params.get("razorpay_signature", "")
 
+    download_page = f"{FRONTEND_URL.rstrip('/')}/download.html" if FRONTEND_URL != "/" else "/download.html"
+
     if not reference_id:
         logger.warning("Payment callback missing reference_id; cannot match a report.")
-        return RedirectResponse(url=f"{FRONTEND_URL}?payment_error=missing_reference")
+        return RedirectResponse(url=f"{download_page}?payment_error=missing_reference")
 
     verified = False
     if RAZORPAY_KEY_SECRET:
@@ -501,12 +546,118 @@ async def payment_callback(request: Request):
 
     if verified and status_param == "paid":
         record = store.mark_paid(reference_id, payment_id=payment_id)
+        mark_paid_in_supabase(reference_id, payment_id)
         if record is None:
             logger.warning("Paid callback for unknown report_id=%s", reference_id)
-            return RedirectResponse(url=f"{FRONTEND_URL}?payment_error=unknown_report")
-        return RedirectResponse(url=f"{FRONTEND_URL}?report_id={reference_id}&paid=1")
+        return RedirectResponse(url=f"{download_page}?paid=1")
 
-    return RedirectResponse(url=f"{FRONTEND_URL}?report_id={reference_id}&payment_error=1")
+    return RedirectResponse(url=f"{download_page}?payment_error=1")
+
+
+# ---------------------------------------------------------------------------
+# Download lookup (recovery flow): find the latest paid report for a given
+# email + phone number and stream the PDF back, regenerating it from the
+# stored report text if the on-disk file is gone.
+# ---------------------------------------------------------------------------
+
+class DownloadLookupRequest(BaseModel):
+    email: str
+    phone: str
+
+
+@app.post("/download/lookup")
+async def download_lookup(payload: DownloadLookupRequest):
+    """
+    Looks up the most recent PAID row in Supabase matching the given email
+    + phone number, and returns the PDF directly. If the on-disk PDF from
+    the original /analyze request is no longer available (e.g. the
+    ephemeral Render disk was wiped by a redeploy), it's regenerated on
+    the fly from the report text stored in Supabase.
+    """
+    if supabase is None:
+        raise HTTPException(
+            status_code=500,
+            detail="Report lookup isn't available right now. Please try again shortly.",
+        )
+
+    email = report_utils.normalize_email(payload.email)
+    phone = report_utils.normalize_phone(payload.phone)
+
+    if not email or not phone:
+        raise HTTPException(status_code=422, detail="Both email and phone number are required.")
+
+    try:
+        result = (
+            supabase.table(SUPABASE_TABLE)
+            .select("*")
+            .eq("email", email)
+            .eq("phone", phone)
+            .eq("paid", True)
+            .order("created_at", desc=True)
+            .limit(1)
+            .execute()
+        )
+    except Exception:
+        logger.exception("Supabase lookup failed for email/phone download request")
+        raise HTTPException(
+            status_code=500,
+            detail="Something went wrong while looking up your report. Please try again.",
+        )
+
+    rows = result.data or []
+    if not rows:
+        raise HTTPException(
+            status_code=404,
+            detail="We couldn't find a completed payment for these details.",
+        )
+
+    row = rows[0]
+
+    # Try the PDF already on disk first; regenerate from the stored report
+    # text if it's missing (ephemeral disk was wiped since it was made).
+    pdf_filename = row.get("pdf_filename")
+    filepath = os.path.join(REPORTS_DIR, pdf_filename) if pdf_filename else None
+
+    if not filepath or not os.path.exists(filepath):
+        report_markdown = row.get("report")
+        if not report_markdown:
+            raise HTTPException(
+                status_code=410,
+                detail="Your report data is no longer available. Please generate a new reading.",
+            )
+        rashi = row.get("rashi") or report_utils.extract_rashi(report_markdown)
+        try:
+            pdf_filename = generate_pdf(
+                name=row.get("name") or "",
+                email=row.get("email") or "",
+                dob=row.get("dob") or "",
+                place=row.get("place") or "",
+                rashi=rashi,
+                report_markdown=report_markdown,
+            )
+        except Exception:
+            logger.exception("Failed to regenerate PDF during download lookup")
+            raise HTTPException(status_code=500, detail="Something went wrong. Please try again.")
+        filepath = os.path.join(REPORTS_DIR, pdf_filename)
+
+        # Keep Supabase's record pointing at the freshly regenerated file.
+        try:
+            supabase.table(SUPABASE_TABLE).update({"pdf_filename": pdf_filename}).eq(
+                "report_id", row.get("report_id")
+            ).execute()
+        except Exception:
+            logger.exception("Failed to update pdf_filename in Supabase after regeneration")
+
+    download_name = f"{report_utils.strip_markers(row.get('name') or 'astrology')}_report.pdf".replace(" ", "_")
+
+    with open(filepath, "rb") as f:
+        pdf_bytes = f.read()
+
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{download_name}"'},
+    )
 
 
 # ---------------------------------------------------------------------------

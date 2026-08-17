@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Download Your Report — AI Vedic Astrology Report</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+  <div class="bg-glow bg-glow-1"></div>
+  <div class="bg-glow bg-glow-2"></div>
+
+  <main class="page">
+    <header class="hero">
+      <h1 class="hero-title">Download Your Report</h1>
+      <p class="hero-subtitle">
+        Enter the email and phone number you used when you paid, and we'll find your completed report.
+      </p>
+    </header>
+
+    <section class="card" id="lookupCard">
+      <form id="lookupForm" novalidate>
+        <div class="form-grid">
+          <div class="field">
+            <label for="lookupEmail">Email Address</label>
+            <input type="email" id="lookupEmail" placeholder="e.g. jane@example.com" autocomplete="email" />
+            <span class="error-msg" id="err-lookupEmail"></span>
+          </div>
+
+          <div class="field">
+            <label for="lookupPhone">Phone Number</label>
+            <input type="tel" id="lookupPhone" placeholder="e.g. 9876543210" autocomplete="tel" />
+            <span class="error-msg" id="err-lookupPhone"></span>
+          </div>
+        </div>
+
+        <button type="submit" class="submit-btn" id="lookupBtn">
+          <span class="btn-label">Find &amp; Download My PDF</span>
+        </button>
+
+        <div class="lookup-status" id="lookupStatus" hidden></div>
+      </form>
+
+      <div class="result-actions">
+        <a class="secondary-btn" href="index.html">&larr; Back to Home</a>
+      </div>
+    </section>
+
+    <footer class="page-footer">
+      <p>AI Vedic Astrology Report &mdash; for entertainment and self-reflection purposes only.</p>
+    </footer>
+  </main>
+
+<script src="download.js"></script>
+</body>
+</html>
