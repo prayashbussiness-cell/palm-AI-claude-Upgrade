@@ -148,6 +148,28 @@ def extract_rashi(markdown_text: str) -> str:
     return "Not determined"
 
 
+RASHI_LINE_RE = re.compile(
+    r"(\*\*Rashi\s*\(Moon Sign\):?\*\*\s*:?\s*)([^\n]*)",
+    re.IGNORECASE,
+)
+
+
+def force_rashi(markdown_text: str, correct_rashi: str) -> str:
+    """
+    Overwrites whatever Rashi value the model wrote in the Basic
+    Astrological Details bullet with the astronomically-computed correct
+    one (see astro_calc.compute_birth_facts). This is a safety net: even
+    if the model doesn't follow the "use this exact value" instruction,
+    the Rashi shown to the user (and highlighted/used in the PDF) is
+    always the real one, not a guess.
+    """
+    if not correct_rashi:
+        return markdown_text
+    if RASHI_LINE_RE.search(markdown_text):
+        return RASHI_LINE_RE.sub(lambda m: m.group(1) + correct_rashi, markdown_text, count=1)
+    return markdown_text
+
+
 def detect_issue_chips(markdown_text: str) -> List[str]:
     """Which problem-heavy sections actually contain a [[PROBLEM]] marker."""
     blocks = _split_blocks(markdown_text)

@@ -45,6 +45,7 @@ try:
     import report_utils
     import store
     import payments
+    import astro_calc
 except ImportError:
     # Works when the app is run from the repo root (uvicorn backend.main:app),
     # i.e. when Root Directory is unset/empty.
@@ -53,6 +54,7 @@ except ImportError:
     from backend import report_utils
     from backend import store
     from backend import payments
+    from backend import astro_calc
 
 # ---------------------------------------------------------------------------
 # Setup
@@ -166,6 +168,28 @@ if not RAZORPAY_KEY_SECRET:
         "this before going live."
     )
 
+# --- Testing bypass for the paywall ---
+# When true, /download/lookup and /report/{id}/download ignore the `paid`
+# flag entirely, so you can test the full "submit details -> retrieve
+# report" flow (including download.html) without completing a real
+# Razorpay payment each time. Defaults to OFF so production behaves
+# correctly out of the box. Set SKIP_PAYMENT_CHECK=true as a Render env
+# var while testing, and remove it (or set it back to false) before
+# accepting real payments — with it on, ANYONE who knows/guesses an
+# email + phone used on this app can download that person's report for
+# free.
+SKIP_PAYMENT_CHECK = os.environ.get("SKIP_PAYMENT_CHECK", "false").strip().lower() in (
+    "1",
+    "true",
+    "yes",
+)
+if SKIP_PAYMENT_CHECK:
+    logger.warning(
+        "SKIP_PAYMENT_CHECK is ON — /download/lookup and /report/{id}/download "
+        "will serve PDFs without a completed payment. This is for testing "
+        "only; turn it off before accepting real payments."
+    )
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -203,12 +227,14 @@ async def _save_upload(file: UploadFile, prefix: str) -> str:
     return filepath
 
 
-async def generate_astrology_report(name: str, dob: str, place: str) -> str:
+async def generate_astrology_report(name: str, dob: str, place: str, birth_facts: dict) -> str:
     """
-    Calls the Gemini API using ONLY the person's name, date of birth, and
-    place of birth (no time of birth, no images) and returns a
-    markdown-formatted Vedic astrology report containing [[PROBLEM]]/
-    [[SOLUTION]] markers.
+    Calls the Gemini API using the person's name, date of birth, place of
+    birth (no time of birth, no images), and the astronomically-computed
+    Moon Rashi/Nakshatra facts (see astro_calc.compute_birth_facts) so the
+    model writes its narrative around real data instead of guessing the
+    Moon sign itself. Returns a markdown-formatted Vedic astrology report
+    containing [[PROBLEM]]/[[SOLUTION]] markers.
     """
     if gemini_client is None:
         raise RuntimeError(
@@ -216,7 +242,7 @@ async def generate_astrology_report(name: str, dob: str, place: str) -> str:
             "Set it in your .env file (or Render environment variables) before starting the backend."
         )
 
-    user_prompt = build_user_prompt(name=name, dob=dob, place=place)
+    user_prompt = build_user_prompt(name=name, dob=dob, place=place, birth_facts=birth_facts)
 
     response = gemini_client.models.generate_content(
         model=GEMINI_MODEL,
@@ -382,12 +408,25 @@ async def analyze(
             logger.exception("Upload failed")
             raise HTTPException(status_code=400, detail="Image upload failed. Please try again.") from exc
 
-        # --- Generate report via Gemini (name + dob + place only) ---
+        # --- Compute the REAL Moon Rashi/Nakshatra from birth date (Swiss
+        # Ephemeris, Lahiri ayanamsa) so the report is built around actual
+        # data instead of the model guessing it. ---
+        try:
+            birth_facts = astro_calc.compute_birth_facts(dob.strip())
+        except Exception as exc:
+            logger.exception("Birth chart calculation failed for dob=%s", dob)
+            raise HTTPException(
+                status_code=422,
+                detail="Couldn't parse that date of birth. Please pick it from the calendar and try again.",
+            ) from exc
+
+        # --- Generate report via Gemini (name + dob + place + computed facts) ---
         try:
             report_markdown = await generate_astrology_report(
                 name=name.strip(),
                 dob=dob.strip(),
                 place=place.strip(),
+                birth_facts=birth_facts,
             )
         except Exception as exc:
             logger.exception("Gemini generation failed")
@@ -396,8 +435,11 @@ async def analyze(
                 detail="Something went wrong while generating your report. Please try again.",
             ) from exc
 
-        # --- Parse the report: Rashi, issue chips, free teaser ---
-        rashi = report_utils.extract_rashi(report_markdown)
+        # --- Rashi is the astronomically computed value, not a model guess.
+        # Force-correct the bullet in the markdown too, in case the model
+        # didn't copy it exactly. ---
+        rashi = birth_facts["moon_rashi"]
+        report_markdown = report_utils.force_rashi(report_markdown, rashi)
         issues = report_utils.detect_issue_chips(report_markdown)
         teaser_html, truncated = report_utils.build_teaser_html(report_markdown)
 
@@ -491,7 +533,7 @@ async def download_report(report_id: str):
     record = store.get_report(report_id)
     if record is None:
         raise HTTPException(status_code=404, detail="Report not found.")
-    if not record.get("paid"):
+    if not record.get("paid") and not SKIP_PAYMENT_CHECK:
         raise HTTPException(
             status_code=402,
             detail="Payment required. Please complete the Rs 9 payment to download your full report.",
@@ -587,16 +629,15 @@ async def download_lookup(payload: DownloadLookupRequest):
         raise HTTPException(status_code=422, detail="Both email and phone number are required.")
 
     try:
-        result = (
+        query = (
             supabase.table(SUPABASE_TABLE)
             .select("*")
             .eq("email", email)
             .eq("phone", phone)
-            .eq("paid", True)
-            .order("created_at", desc=True)
-            .limit(1)
-            .execute()
         )
+        if not SKIP_PAYMENT_CHECK:
+            query = query.eq("paid", True)
+        result = query.order("created_at", desc=True).limit(1).execute()
     except Exception:
         logger.exception("Supabase lookup failed for email/phone download request")
         raise HTTPException(

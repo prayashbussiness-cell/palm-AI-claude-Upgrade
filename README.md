@@ -259,7 +259,21 @@ directly by this same FastAPI app.
    `RAZORPAY_KEY_SECRET`. Optionally add `GEMINI_MODEL`, `SUPABASE_URL` /
    `SUPABASE_KEY` (only if overriding built-in defaults), `SUPABASE_TABLE`,
    `SUPABASE_BUCKET`, `ALLOWED_ORIGINS`, `RAZORPAY_PAYMENT_LINK`,
-   `REPORT_PRICE_INR`, and `FRONTEND_URL` (your deployed URL).
+   `REPORT_PRICE_INR`, `FRONTEND_URL` (your deployed URL), and
+   `SKIP_PAYMENT_CHECK` (see below — testing only).
+
+**Testing the paywall + download flow without paying (`SKIP_PAYMENT_CHECK`):**
+Normally `/download.html` only returns a PDF for a report whose `paid`
+flag is `true` in Supabase — which only happens after a real (or
+signature-verified) Razorpay payment. To test the "submit details ->
+retrieve report" flow end-to-end without paying each time, set
+`SKIP_PAYMENT_CHECK=true` as a Render env var (or in your local `.env`).
+While it's on, both `/download/lookup` and `/report/{id}/download` will
+serve the PDF for a matching email + phone regardless of payment status
+— **anyone who knows/guesses an email + phone used on the app can then
+download that report for free**, so remove this env var (or set it to
+`false`) before accepting real payments. It defaults to `false`, so
+production is unaffected unless you explicitly opt in.
 
 Either way, you get **one Render URL** that serves the whole app.
 
@@ -298,12 +312,29 @@ at startup.
 
 - `/analyze` receives the form (name, email, phone, dob, place) + the face
   photo.
-- Only the birth details (no images) are sent to Gemini, which returns
-  markdown containing `[[PROBLEM]]`/`[[SOLUTION]]` markers and a Rashi
-  line.
-- `report_utils.py` extracts the Rashi, detects which sections raised a
-  problem (for the "X Challenges Detected" chips), and builds the ~30%
-  teaser HTML (red/green highlighted).
+- `astro_calc.py` computes the **actual** Moon sign (Rashi), Nakshatra,
+  Nakshatra Pada/Lord, and Sun sign for the date of birth using the
+  Swiss Ephemeris library (sidereal, Lahiri ayanamsa) — these are real
+  ephemeris positions, not something the AI model guesses. Since only a
+  date (no time of birth, no geocoded place) is collected, this is
+  evaluated at local noon UTC on that date; on the handful of dates a
+  year where the Moon crosses a sign/nakshatra boundary, the facts are
+  flagged as `*_uncertain` and the prompt notes that the reading applies
+  to most of the day.
+- These computed facts are sent to Gemini as ground truth the model must
+  build its narrative around (not recalculate). The birth details (no
+  images) plus these facts go to Gemini, which returns markdown
+  containing `[[PROBLEM]]`/`[[SOLUTION]]` markers and a Rashi/Nakshatra
+  line that should echo the computed facts.
+- As a safety net, `report_utils.force_rashi()` overwrites the Rashi
+  bullet in the model's markdown with the computed value regardless of
+  what the model wrote, and the `rashi` stored/shown everywhere (teaser,
+  PDF, Supabase row) is the computed value directly — never something
+  parsed out of the AI's text. This guarantees the Rashi shown to the
+  user is always astronomically correct.
+- `report_utils.py` detects which sections raised a problem (for the "X
+  Challenges Detected" chips), and builds the ~30% teaser HTML (red/green
+  highlighted).
 - `pdf_generator.py` renders the full report to PDF with the same
   red/green colouring and the Rashi highlighted in place of exact
   birth-time details (no time of birth is collected at all any more).
