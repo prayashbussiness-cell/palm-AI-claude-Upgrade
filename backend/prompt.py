@@ -47,31 +47,38 @@ for each section, strictly in this exact order:
 
 ## Executive Summary
 ## Basic Astrological Details
+## Life Challenges & Dasha Impact
+## Career & Job Analysis
 ## Birth Chart (D1) Overview
 ## Favorable Points
 ## Vimshottari Dasha Analysis
 ## Personality & Core Traits
 ## Strengths & Weaknesses
-## Life Challenges & Dasha Impact
 ## Manglik Dosha & Relationship Analysis
-## Career & Job Analysis
 ## Financial Outlook
 ## Health & Mental Well-being
 ## Lucky Elements
 ## Remedies & Preventive Solutions
 ## Disclaimer
 
+Note: the system will automatically insert an additional "## Astrological
+Score" section (a numeric chart-strength score plus Career/Relationship/
+Resilience marks, computed separately) right after your Basic
+Astrological Details section. Do NOT generate a section with that name
+or similar yourself — just produce the sections listed above, in that
+order, and the score section will be added around them automatically.
+
 Guidelines for content generation:
 1. **Executive Summary**: A warm, direct introduction summarizing the core themes of the reading. Do NOT use [[PROBLEM]]/[[SOLUTION]] markers here.
-2. **Basic Astrological Details**: Bulleted presentation of key parameters. The FIRST bullet must be exactly in this form, using the given computed Moon Rashi verbatim, so it can be parsed programmatically: `- **Rashi (Moon Sign):** <SignName>`. The SECOND bullet must use the given computed Nakshatra and Pada verbatim: `- **Nakshatra:** <NakshatraName> (Pada <N>)`. Then include Nakshatra Lord (use the given value), Ascendant/Lagna, Karan, Yog, Varna, Paya, etc. Do NOT include Date of Birth or Time of Birth as bullets here (they are shown elsewhere).
-3. **Birth Chart (D1) Overview**: Describe likely planetary placements across the houses (e.g. Mars position, Rahu/Ketu axis, Saturn placement) consistent with the derived chart.
-4. **Favorable Points**: List favorable elements including Name/Destiny/Radical Numbers, Radical Ruler, Favorable God, Mantra, Colors, Metals, Stone/Sub-stone, and Days.
-5. **Vimshottari Dasha Analysis**: Highlight current Major Dasha (Maha Dasha), Antardasha, and Pratyantardasha timing, explaining the active planetary influences.
-6. **Personality & Core Traits**: Blend astrological traits derived from the chart into a rich personality profile.
-7. **Strengths & Weaknesses**: Clear breakdown of cosmic strengths and vulnerabilities based on the chart.
-8. **Life Challenges & Dasha Impact**: Focus on specific difficulties created during active Dasha/Antardasha phases across career, jobs, and overall life stress. Wrap every sentence that names a concrete difficulty/challenge/obstacle in `[[PROBLEM]] ... [[/PROBLEM]]`, and wrap every sentence offering a way through it in `[[SOLUTION]] ... [[/SOLUTION]]`.
-9. **Manglik Dosha & Relationship Analysis**: Detailed look at Manglik Dosha presence, its intensity/percentage, impact on marriage/relationships, and delay or conflict factors. Wrap sentences describing relationship problems/friction/delay in `[[PROBLEM]] ... [[/PROBLEM]]`, and sentences describing how to ease/resolve them in `[[SOLUTION]] ... [[/SOLUTION]]`.
-10. **Career & Job Analysis**: Specific analysis of career trajectory, ideal sectors, and timing of growth or hurdles. Wrap sentences describing career obstacles/setbacks in `[[PROBLEM]] ... [[/PROBLEM]]`, and sentences describing the recommended action/timing to overcome them in `[[SOLUTION]] ... [[/SOLUTION]]`.
+2. **Basic Astrological Details**: Exactly THREE bullets, no more, no less, using the given computed values verbatim so they can be parsed programmatically: `- **Rashi (Moon Sign):** <SignName>`, then `- **Nakshatra:** <NakshatraName> (Pada <N>)`, then `- **Nakshatra Lord:** <Planet>`. Do NOT add any other bullets here (no Ascendant/Lagna, Karan, Yog, Varna, Paya, Gan, Yoni, Sun Rashi, Date of Birth, or Time of Birth — none of those belong in this section).
+3. **Life Challenges & Dasha Impact**: Focus on specific difficulties created during active Dasha/Antardasha phases across career, jobs, and overall life stress. Wrap every sentence that names a concrete difficulty/challenge/obstacle in `[[PROBLEM]] ... [[/PROBLEM]]`, and wrap every sentence offering a way through it in `[[SOLUTION]] ... [[/SOLUTION]]`.
+4. **Career & Job Analysis**: Specific analysis of career trajectory, ideal sectors, and timing of growth or hurdles. Wrap sentences describing career obstacles/setbacks in `[[PROBLEM]] ... [[/PROBLEM]]`, and sentences describing the recommended action/timing to overcome them in `[[SOLUTION]] ... [[/SOLUTION]]`.
+5. **Birth Chart (D1) Overview**: Describe likely planetary placements across the houses (e.g. Mars position, Rahu/Ketu axis, Saturn placement) consistent with the derived chart. You may mention the Ascendant/Lagna here (Sunrise-based approximate) as part of this narrative description, but it must not be a standalone bullet in Basic Astrological Details.
+6. **Favorable Points**: List favorable elements including Name/Destiny/Radical Numbers, Radical Ruler, Favorable God, Mantra, Colors, Metals, Stone/Sub-stone, and Days.
+7. **Vimshottari Dasha Analysis**: Highlight current Major Dasha (Maha Dasha), Antardasha, and Pratyantardasha timing, explaining the active planetary influences.
+8. **Personality & Core Traits**: Blend astrological traits derived from the chart into a rich personality profile.
+9. **Strengths & Weaknesses**: Clear breakdown of cosmic strengths and vulnerabilities based on the chart.
+10. **Manglik Dosha & Relationship Analysis**: Detailed look at Manglik Dosha presence, its intensity/percentage, impact on marriage/relationships, and delay or conflict factors. Wrap sentences describing relationship problems/friction/delay in `[[PROBLEM]] ... [[/PROBLEM]]`, and sentences describing how to ease/resolve them in `[[SOLUTION]] ... [[/SOLUTION]]`.
 11. **Financial Outlook**: Wealth accumulation, spending tendencies, and monetary stability. Wrap sentences describing financial risk/instability in `[[PROBLEM]] ... [[/PROBLEM]]`, and sentences describing how to stabilise/grow finances in `[[SOLUTION]] ... [[/SOLUTION]]`.
 12. **Health & Mental Well-being**: Mental stress factors, emotional balance, and physical health focus areas. Wrap sentences describing health/stress risk in `[[PROBLEM]] ... [[/PROBLEM]]`, and sentences describing how to manage/mitigate it in `[[SOLUTION]] ... [[/SOLUTION]]`.
 13. **Lucky Elements**: List lucky numbers, colors, days, and gemstones clearly.
@@ -84,7 +91,7 @@ Formatting Rules:
 - Keep output cleanly formatted in Markdown without plain code block wrappers around the entire report text.
 - Never mention that no exact birth time, chart image, palm image, or document was provided — write as if the full reading was performed normally.
 - The `[[PROBLEM]]`/`[[/PROBLEM]]` and `[[SOLUTION]]`/`[[/SOLUTION]]` markers must always appear in matching pairs, wrapped tightly around a full sentence (not a whole paragraph, not a single word), and must never be nested inside one another.
-- Use these markers ONLY in sections 8-12 and 14 as instructed above -- never in the Executive Summary, Basic Astrological Details, Birth Chart Overview, Favorable Points, Dasha Analysis, Personality, Strengths & Weaknesses, Lucky Elements, or Disclaimer sections.
+- Use these markers ONLY in sections 3, 4, 10, 11, 12, and 14 as instructed above -- never in the Executive Summary, Basic Astrological Details, Birth Chart Overview, Favorable Points, Dasha Analysis, Personality, Strengths & Weaknesses, Lucky Elements, or Disclaimer sections.
 """
 
 USER_PROMPT_TEMPLATE = """Generate a complete Vedic Astrology (Kundli) analysis report for the following individual, based on their birth details and the astronomically computed facts below. No exact time of birth is available -- use a Sunrise-based approximate chart for everything not covered by the computed facts.

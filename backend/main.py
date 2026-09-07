@@ -440,6 +440,22 @@ async def analyze(
         # didn't copy it exactly. ---
         rashi = birth_facts["moon_rashi"]
         report_markdown = report_utils.force_rashi(report_markdown, rashi)
+
+        # --- Astrological Score: computed deterministically from the real
+        # chart data (never asked of the model -- see astro_calc.compute_score
+        # for why), spliced in right after Basic Astrological Details. ---
+        score = astro_calc.compute_score(birth_facts)
+        score_markdown = (
+            "## Astrological Score\n"
+            f"- **Overall Astrological Score:** {score['overall']}/100\n"
+            f"- **Career Strength:** {score['career']}/100\n"
+            f"- **Relationship Harmony:** {score['relationship']}/100\n"
+            f"- **Power to Face Situations:** {score['resilience']}/100\n"
+        )
+        report_markdown = report_utils.insert_section_after(
+            report_markdown, "Basic Astrological Details", score_markdown
+        )
+
         issues = report_utils.detect_issue_chips(report_markdown)
         teaser_html, truncated = report_utils.build_teaser_html(report_markdown)
 

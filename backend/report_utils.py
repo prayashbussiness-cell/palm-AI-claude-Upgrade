@@ -185,8 +185,49 @@ def detect_issue_chips(markdown_text: str) -> List[str]:
     return chips
 
 
+SECTION_HEADING_RE = re.compile(r"(?m)^##\s+(.+?)\s*$")
+
+
+def insert_section_after(markdown_text: str, after_heading: str, section_markdown: str) -> str:
+    """
+    Insert `section_markdown` (a full "## Heading\\n..." block) right
+    after the section named `after_heading` ends -- i.e. immediately
+    before whatever "## " heading comes next -- regardless of exactly
+    how that following section is titled. Used to splice the
+    backend-computed Astrological Score section into the model's
+    markdown at a fixed position, rather than trusting the model to
+    generate (and correctly compute) it itself.
+
+    Falls back to inserting right after the first heading if
+    `after_heading` isn't found, so the section is never silently lost.
+    """
+    matches = list(SECTION_HEADING_RE.finditer(markdown_text))
+    target_idx = None
+    for i, m in enumerate(matches):
+        if m.group(1).strip().lower() == after_heading.strip().lower():
+            target_idx = i
+            break
+
+    if target_idx is None:
+        if not matches:
+            return markdown_text.strip() + "\n\n" + section_markdown.strip() + "\n"
+        insert_pos = matches[0].end()
+    elif target_idx + 1 < len(matches):
+        insert_pos = matches[target_idx + 1].start()
+    else:
+        insert_pos = len(markdown_text)
+
+    return (
+        markdown_text[:insert_pos].rstrip()
+        + "\n\n"
+        + section_markdown.strip()
+        + "\n\n"
+        + markdown_text[insert_pos:].lstrip()
+    )
+
+
 # Sections always shown in full in the free teaser (no markers expected).
-ALWAYS_FULL_SECTIONS = {"executive summary", "basic astrological details"}
+ALWAYS_FULL_SECTIONS = {"executive summary", "basic astrological details", "astrological score"}
 
 TEASER_RATIO = 0.30
 

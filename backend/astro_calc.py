@@ -91,7 +91,8 @@ def compute_birth_facts(dob_iso: str) -> dict:
     dob_iso: "YYYY-MM-DD" (the format the frontend's date picker sends).
 
     Returns real, computed facts:
-      moon_rashi, sun_rashi, nakshatra, nakshatra_pada, nakshatra_lord,
+      moon_rashi, moon_rashi_index, sun_rashi, sun_rashi_index, nakshatra,
+      nakshatra_index, nakshatra_pada, nakshatra_lord,
       moon_sign_uncertain, nakshatra_uncertain
     """
     year, month, day = (int(p) for p in dob_iso.split("-")[:3])
@@ -103,8 +104,11 @@ def compute_birth_facts(dob_iso: str) -> dict:
     moon_lon_noon = _sidereal_longitude(jd_noon, swe.MOON)
     sun_lon_noon = _sidereal_longitude(jd_noon, swe.SUN)
 
-    moon_rashi = _rashi_for_longitude(moon_lon_noon)
-    sun_rashi = _rashi_for_longitude(sun_lon_noon)
+    moon_rashi_index = int(moon_lon_noon // 30) % 12
+    sun_rashi_index = int(sun_lon_noon // 30) % 12
+    moon_rashi = RASHI_NAMES[moon_rashi_index]
+    sun_rashi = RASHI_NAMES[sun_rashi_index]
+    nakshatra_index = int(moon_lon_noon // _NAKSHATRA_SPAN) % 27
     nakshatra, pada, lord = _nakshatra_for_longitude(moon_lon_noon)
 
     moon_rashi_start = _rashi_for_longitude(_sidereal_longitude(jd_start, swe.MOON))
@@ -117,10 +121,103 @@ def compute_birth_facts(dob_iso: str) -> dict:
 
     return {
         "moon_rashi": moon_rashi,
+        "moon_rashi_index": moon_rashi_index,
         "sun_rashi": sun_rashi,
+        "sun_rashi_index": sun_rashi_index,
         "nakshatra": nakshatra,
+        "nakshatra_index": nakshatra_index,
         "nakshatra_pada": pada,
         "nakshatra_lord": lord,
         "moon_sign_uncertain": moon_sign_uncertain,
         "nakshatra_uncertain": nakshatra_uncertain,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Astrological Score
+# ---------------------------------------------------------------------------
+# A transparent, deterministic "chart strength" score (0-100) plus Career /
+# Relationship / Power-to-Face-Situations sub-scores, built from the real
+# computed Moon sign, Sun sign, and Nakshatra lord above -- NOT an AI
+# guess, so the same birth date always produces the same score (asking the
+# model to invent a number would give a different score every time the
+# same person's report is regenerated). This is a heuristic entertainment
+# feature (the report's Disclaimer section already frames the whole
+# reading as being for self-reflection/entertainment, not certified
+# astrology) built from traditional, real correspondences -- each sign's
+# element (Fire/Earth/Air/Water) and modality (Cardinal/Fixed/Mutable),
+# and each nakshatra lord's classical significations (karakas) -- combined
+# with a simple, fixed, documented formula. It is not a claim of any
+# single authoritative Vedic scoring method; no such universal formula
+# exists.
+
+ELEMENTS = ["Fire", "Earth", "Air", "Water"]  # Aries=Fire, Taurus=Earth, ... repeating
+MODALITIES = ["Cardinal", "Fixed", "Mutable"]  # Aries=Cardinal, Taurus=Fixed, ... repeating
+
+# planet -> (career, relationship, resilience/"power to face situations")
+_KARAKA_WEIGHTS = {
+    "Sun": (18, 2, 10),
+    "Moon": (5, 12, 5),
+    "Mars": (8, 2, 18),
+    "Mercury": (15, 8, 5),
+    "Jupiter": (12, 12, 8),
+    "Venus": (5, 18, 3),
+    "Saturn": (10, 3, 18),
+    "Rahu": (14, 4, 10),
+    "Ketu": (2, 4, 16),
+}
+
+_ELEMENT_WEIGHTS = {
+    "Fire": (8, 2, 10),
+    "Earth": (10, 5, 6),
+    "Air": (5, 10, 4),
+    "Water": (2, 10, 6),
+}
+
+_MODALITY_WEIGHTS = {
+    "Cardinal": (8, 3, 6),
+    "Fixed": (4, 4, 10),
+    "Mutable": (3, 6, 3),
+}
+
+_BASE_SCORE = 40
+
+
+def _clip_score(value: float) -> int:
+    return max(20, min(96, round(value)))
+
+
+def compute_score(birth_facts: dict) -> dict:
+    """
+    Returns {"overall", "career", "relationship", "resilience"}, each an
+    int 0-100. See the module-level comment above for what this is (and
+    isn't) based on.
+    """
+    moon_elem = ELEMENTS[birth_facts["moon_rashi_index"] % 4]
+    moon_mod = MODALITIES[birth_facts["moon_rashi_index"] % 3]
+    sun_elem = ELEMENTS[birth_facts["sun_rashi_index"] % 4]
+    lord_weights = _KARAKA_WEIGHTS.get(birth_facts["nakshatra_lord"], (0, 0, 0))
+
+    career = relationship = resilience = float(_BASE_SCORE)
+    for c, r, s in (lord_weights, _ELEMENT_WEIGHTS[moon_elem], _MODALITY_WEIGHTS[moon_mod]):
+        career += c
+        relationship += r
+        resilience += s
+
+    # Sun sign is a smaller, secondary influence.
+    sc, sr, ss = _ELEMENT_WEIGHTS[sun_elem]
+    career += sc / 2
+    relationship += sr / 2
+    resilience += ss / 2
+
+    career = _clip_score(career)
+    relationship = _clip_score(relationship)
+    resilience = _clip_score(resilience)
+    overall = _clip_score((career + relationship + resilience) / 3)
+
+    return {
+        "overall": overall,
+        "career": career,
+        "relationship": relationship,
+        "resilience": resilience,
     }
