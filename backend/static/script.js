@@ -36,6 +36,12 @@ const tryAgainBtn = document.getElementById("tryAgainBtn");
 const rashiBadge = document.getElementById("rashiBadge");
 const rashiValueEl = document.getElementById("rashiValue");
 const issueChipsEl = document.getElementById("issueChips");
+const accuracyNote = document.getElementById("accuracyNote");
+const accuracyPill = document.getElementById("accuracyPill");
+const accuracyTitle = document.getElementById("accuracyTitle");
+const accuracyDetail = document.getElementById("accuracyDetail");
+const accuracyWindow = document.getElementById("accuracyWindow");
+const accuracyWarnings = document.getElementById("accuracyWarnings");
 const teaserContentEl = document.getElementById("teaserContent");
 const lockedNotice = document.getElementById("lockedNotice");
 
@@ -57,6 +63,7 @@ const fields = {
   phone: document.getElementById("phone"),
   dob: document.getElementById("dob"),
   place: document.getElementById("place"),
+  tob: document.getElementById("tob"),
   confirm: document.getElementById("confirm"),
 };
 
@@ -413,8 +420,34 @@ function stopProgressAnimation() {
 // Result rendering (teaser + paywall / unlocked state)
 // ---------------------------------------------------------------------------
 
+// Shows how exact the house placements are (birth time used or not), which
+// place was matched, the Ascendant's time window, and any warnings. All
+// text is set via textContent, never innerHTML.
+function renderAccuracy(acc) {
+  if (!acc) {
+    accuracyNote.hidden = true;
+    return;
+  }
+  accuracyNote.className = `accuracy-note accuracy-${acc.mode === "exact" ? "exact" : "approx"}`;
+  accuracyPill.textContent = acc.mode === "exact" ? "Exact" : "Approximate";
+  accuracyTitle.textContent = acc.title || "";
+  accuracyDetail.textContent = acc.detail || "";
+
+  accuracyWindow.textContent = acc.window || "";
+  accuracyWindow.hidden = !acc.window;
+
+  accuracyWarnings.innerHTML = "";
+  (acc.warnings || []).forEach((text) => {
+    const li = document.createElement("li");
+    li.textContent = text;
+    accuracyWarnings.appendChild(li);
+  });
+  accuracyNote.hidden = false;
+}
+
 function renderResult(data) {
   currentReportId = data.report_id;
+  renderAccuracy(data.accuracy);
 
   if (data.rashi) {
     rashiValueEl.textContent = data.rashi;
@@ -542,6 +575,9 @@ form.addEventListener("submit", async (e) => {
   formData.append("phone", fields.phone.value.trim());
   formData.append("dob", fields.dob.value);
   formData.append("place", fields.place.value.trim());
+  if (fields.tob.value) {
+    formData.append("tob", fields.tob.value); // optional, "HH:MM"
+  }
   formData.append("facePhoto", selectedFiles.facePhoto);
 
   try {

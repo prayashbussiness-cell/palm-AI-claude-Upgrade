@@ -61,12 +61,54 @@ def _position_text(planet: dict) -> str:
     return text
 
 
+def chart_near_boundary(chart: dict, minutes: int = 10) -> bool:
+    """True if the birth time is within `minutes` of an Ascendant sign change."""
+    w = chart.get("lagna_window")
+    if not w:
+        return False
+    before = None if w.get("before_capped") else w.get("minutes_before")
+    after = None if w.get("after_capped") else w.get("minutes_after")
+    return any(v is not None and v <= minutes for v in (before, after))
+
+
 def build_planets_section(chart: dict) -> str:
     """'## Planetary Positions & House Effects' markdown."""
     lines = [f"## {PLANETS_HEADING}"]
 
-    intro = (
-        "Houses are counted from your Moon sign (Chandra Lagna). "
+    if chart.get("reference_type") == "lagna":
+        lagna_text = f"{chart['lagna']} {chart['lagna_degree_text']}"
+        basis = "your birth time and place"
+        if chart.get("birth_time_text") and chart.get("place_display"):
+            basis = f"your birth time ({chart['birth_time_text']}) and place ({chart['place_display']})"
+        intro = (
+            f"Your Ascendant (Lagna) is {lagna_text}, calculated from {basis}, "
+            "and houses are counted from it. "
+        )
+        window = chart.get("lagna_window") or {}
+        if window.get("start_text") and window.get("end_text"):
+            intro += (
+                f"Your Ascendant stays {chart['lagna']} from {window['start_text']} to "
+                f"{window['end_text']} (local time); a birth time outside that window would "
+                "change every house number. "
+            )
+        if chart_near_boundary(chart):
+            intro += (
+                "Your birth time is close to an Ascendant sign change, so please double-check "
+                "it: a few minutes' difference would move every planet to a different house. "
+            )
+        if chart.get("place_ambiguous"):
+            intro += (
+                "Several places share your birth place name, so please make sure "
+                f"{chart['place_display']} is the right one. "
+            )
+    else:
+        intro = "Houses are counted from your Moon sign (Chandra Lagna). "
+        if chart.get("time_ignored"):
+            intro += (
+                "Your birth place could not be located, so the Ascendant could not be "
+                "calculated from your birth time. "
+            )
+    intro += (
         "Green marks a favourable placement, red a challenging one and amber a mixed one. "
         + chart["source_caveat"]
     )
@@ -123,7 +165,9 @@ def build_dasha_section(chart: dict) -> str:
 
     intro = (
         f"Your running Vimshottari Dasha as of {d['as_of_text']}, calculated from "
-        "the Moon's position at birth. Dates are approximate. A period is coloured "
+        "the Moon's position at birth. "
+        + ("" if chart.get("birth_time_used") else "Dates are approximate. ")
+        + "A period is coloured "
         "by the house its planet occupies in your chart: green is favourable, red "
         "challenging, amber mixed."
     )
@@ -161,7 +205,13 @@ def build_prompt_facts(chart: dict) -> str:
     Lists each planet's sign/house/verdict and the running Dasha periods so
     the narrative stays consistent with the deterministic sections above.
     """
-    lines = ["- **Planetary placements (houses counted from the Moon sign, Chandra Lagna):**"]
+    if chart.get("reference_type") == "lagna":
+        lines = [
+            f"- **Ascendant (Lagna):** {chart['lagna']} (calculated from the exact birth time and place)",
+            "- **Planetary placements (houses counted from the Ascendant):**",
+        ]
+    else:
+        lines = ["- **Planetary placements (houses counted from the Moon sign, Chandra Lagna):**"]
     for p in chart["planets"]:
         traits = p["advantages"] + p["disadvantages"] + p["mixed"]
         detail = f" ({', '.join(traits)})" if traits else ""

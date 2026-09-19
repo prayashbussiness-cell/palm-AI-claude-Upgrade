@@ -78,6 +78,13 @@
             <input type="text" id="place" name="place" placeholder="e.g. Bhubaneswar, Odisha, India" />
             <span class="error-msg" id="err-place"></span>
           </div>
+
+          <div class="field field-full">
+            <label for="tob">Time of Birth <span class="optional">(optional)</span></label>
+            <input type="time" id="tob" name="tob" />
+            <span class="field-hint"><strong>Birth time improves the accuracy of your houses.</strong> It decides your Ascendant (Lagna), which sets the house of every planet. If you know it, add it (with your city, state and country above). If you don't, leave it blank and we'll estimate your houses from your Moon sign.</span>
+            <span class="error-msg" id="err-tob"></span>
+          </div>
         </div>
 
         <div class="upload-grid upload-grid-single">
@@ -143,6 +150,16 @@
       <div class="rashi-badge" id="rashiBadge" hidden>
         <span class="rashi-label">Your Rashi (Moon Sign)</span>
         <span class="rashi-value" id="rashiValue"></span>
+      </div>
+
+      <div class="accuracy-note" id="accuracyNote" hidden>
+        <div class="accuracy-head">
+          <span class="accuracy-pill" id="accuracyPill"></span>
+          <strong id="accuracyTitle"></strong>
+        </div>
+        <p id="accuracyDetail"></p>
+        <p id="accuracyWindow" hidden></p>
+        <ul id="accuracyWarnings"></ul>
       </div>
 
       <div class="issue-chips" id="issueChips"></div>

@@ -25,10 +25,12 @@ import os
 import re
 import uuid
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 import aiofiles
 from fastapi import FastAPI, Form, File, UploadFile, HTTPException, Request
+from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import JSONResponse, FileResponse, RedirectResponse, Response
@@ -47,6 +49,7 @@ try:
     import payments
     import astro_calc
     import chart_report
+    import geo
 except ImportError:
     # Works when the app is run from the repo root (uvicorn backend.main:app),
     # i.e. when Root Directory is unset/empty.
@@ -57,6 +60,7 @@ except ImportError:
     from backend import payments
     from backend import astro_calc
     from backend import chart_report
+    from backend import geo
 
 # ---------------------------------------------------------------------------
 # Setup
@@ -341,6 +345,77 @@ def _mime_type_from_ext(ext: str) -> str:
     return {".png": "image/png", ".webp": "image/webp"}.get(ext.lower(), "image/jpeg")
 
 
+def _enrich_chart_with_place(chart: dict, tob: str, place_info: dict, birth_dt_utc: datetime) -> None:
+    """Adds the human-readable birth time / matched place / Ascendant window
+    (in the birthplace's local time) to the chart, for the report text and
+    the accuracy note."""
+    tz = place_info["timezone"]
+    hm = geo.parse_time_of_birth(tob)
+    chart["birth_time_text"] = geo.format_time_12h(*hm)
+    chart["place_display"] = place_info.get("display") or place_info.get("name") or "your birth place"
+    chart["place_ambiguous"] = bool(place_info.get("ambiguous"))
+
+    window = chart.get("lagna_window")
+    if window:
+        local_date = birth_dt_utc.replace(tzinfo=timezone.utc).astimezone(ZoneInfo(tz)).date()
+        start = birth_dt_utc - timedelta(minutes=window["minutes_before"])
+        end = birth_dt_utc + timedelta(minutes=window["minutes_after"])
+        window["start_text"] = ("at least " if window["before_capped"] else "") + geo.utc_to_local_text(start, tz, local_date)
+        window["end_text"] = ("at least " if window["after_capped"] else "") + geo.utc_to_local_text(end, tz, local_date)
+
+
+def _build_accuracy(chart: dict | None, time_ignored: bool) -> dict | None:
+    """
+    Small structure the result page shows under the Rashi badge, so the
+    person can see how exact their house placements are and what would
+    improve them.
+    """
+    if chart is None:
+        return None
+
+    if chart.get("birth_time_used"):
+        warnings = []
+        if chart.get("place_ambiguous"):
+            warnings.append(
+                f"Several places share this name. We used {chart['place_display']}. "
+                "Add your state and country to be sure."
+            )
+        if chart_report.chart_near_boundary(chart):
+            warnings.append(
+                "Your birth time is close to an Ascendant sign change. A few minutes' "
+                "difference would move every planet to a different house, so please double-check it."
+            )
+        window = chart.get("lagna_window") or {}
+        window_text = ""
+        if window.get("start_text") and window.get("end_text"):
+            window_text = (
+                f"Your Ascendant stays {chart['lagna']} from {window['start_text']} to "
+                f"{window['end_text']}. A birth time outside this window changes every house."
+            )
+        return {
+            "mode": "exact",
+            "title": "Exact house placements",
+            "detail": (
+                f"Based on your birth time ({chart.get('birth_time_text')}) at "
+                f"{chart.get('place_display')}. Your Ascendant (Lagna) is {chart['lagna']}."
+            ),
+            "window": window_text,
+            "warnings": warnings,
+        }
+
+    if time_ignored:
+        detail = (
+            "We couldn't locate your birth place, so your birth time couldn't be used. "
+            "Try \"City, State, Country\" (e.g. Cuttack, Odisha, India) to get exact house placements."
+        )
+    else:
+        detail = (
+            "Houses are counted from your Moon sign. Add your birth time to get your exact "
+            "Ascendant (Lagna) and accurate house placements."
+        )
+    return {"mode": "approximate", "title": "Approximate house placements", "detail": detail, "window": "", "warnings": []}
+
+
 def _public_report_view(record: dict) -> dict:
     """Only the fields safe to send to the browser (never the raw markdown
     or the on-disk PDF path)."""
@@ -354,6 +429,7 @@ def _public_report_view(record: dict) -> dict:
         "paid": bool(record.get("paid")),
         "amount": REPORT_PRICE_INR,
         "payment_url": record.get("payment_url"),
+        "accuracy": record.get("accuracy"),
     }
 
 
@@ -373,6 +449,7 @@ async def analyze(
     phone: str = Form(...),
     dob: str = Form(...),
     place: str = Form(...),
+    tob: str = Form(""),
     facePhoto: UploadFile = File(...),
 ):
     """
@@ -398,6 +475,8 @@ async def analyze(
         errors.append("Place of birth is required.")
     if facePhoto is None:
         errors.append("Face photo is required.")
+    if tob and tob.strip() and geo.parse_time_of_birth(tob) is None:
+        errors.append("Time of birth must look like HH:MM (24-hour).")
 
     if errors:
         raise HTTPException(status_code=422, detail=" ".join(errors))
@@ -414,11 +493,33 @@ async def analyze(
             logger.exception("Upload failed")
             raise HTTPException(status_code=400, detail="Image upload failed. Please try again.") from exc
 
+        # --- OPTIONAL time of birth: with it (and a place we can locate) the
+        # exact birth moment and true Ascendant can be calculated. Any
+        # failure quietly falls back to the date-only chart. ---
+        birth_dt_utc = None
+        place_info = None
+        place_lat = place_lon = None
+        time_ignored = False
+        if tob and tob.strip():
+            try:
+                place_info = await run_in_threadpool(geo.resolve_place, place.strip())
+                if place_info:
+                    birth_dt_utc = geo.local_to_utc(dob.strip(), tob, place_info["timezone"])
+                    place_lat, place_lon = place_info["lat"], place_info["lon"]
+            except Exception:
+                # Never let a lookup problem break report generation.
+                logger.exception("Birth place lookup crashed; using the date-only chart")
+                birth_dt_utc = None
+            if birth_dt_utc is None:
+                time_ignored = True
+                place_lat = place_lon = None
+                logger.warning("Birth time given but place/timezone unresolved (place=%r)", place)
+
         # --- Compute the REAL Moon Rashi/Nakshatra from birth date (Swiss
         # Ephemeris, Lahiri ayanamsa) so the report is built around actual
         # data instead of the model guessing it. ---
         try:
-            birth_facts = astro_calc.compute_birth_facts(dob.strip())
+            birth_facts = astro_calc.compute_birth_facts(dob.strip(), birth_dt_utc=birth_dt_utc)
         except Exception as exc:
             logger.exception("Birth chart calculation failed for dob=%s", dob)
             raise HTTPException(
@@ -433,7 +534,16 @@ async def analyze(
         chart = None
         chart_facts = ""
         try:
-            chart = astro_calc.compute_chart(dob.strip(), birth_facts)
+            chart = astro_calc.compute_chart(
+                dob.strip(),
+                birth_facts,
+                birth_dt_utc=birth_dt_utc,
+                lat=place_lat,
+                lon=place_lon,
+            )
+            chart["time_ignored"] = time_ignored
+            if chart.get("birth_time_used") and place_info:
+                _enrich_chart_with_place(chart, tob, place_info, birth_dt_utc)
             chart_facts = chart_report.build_prompt_facts(chart)
         except Exception:
             logger.exception("Planetary chart / Dasha calculation failed for dob=%s", dob)
@@ -526,6 +636,7 @@ async def analyze(
                 "truncated": truncated,
                 "pdf_filename": pdf_filename,
                 "payment_url": payment_url,
+                "accuracy": _build_accuracy(chart, time_ignored),
                 "paid": False,
             },
         )

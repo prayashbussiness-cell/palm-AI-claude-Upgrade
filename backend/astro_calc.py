@@ -98,6 +98,11 @@ def _sidereal_longitude(jd_ut: float, planet: int) -> float:
     return lon % 360.0
 
 
+def _jd_from_utc(dt: datetime) -> float:
+    """Julian day (UT) for a naive UTC datetime."""
+    return swe.julday(dt.year, dt.month, dt.day, dt.hour + dt.minute / 60.0 + dt.second / 3600.0)
+
+
 def _rashi_for_longitude(lon: float) -> str:
     return RASHI_NAMES[int(lon // 30) % 12]
 
@@ -109,15 +114,37 @@ def _nakshatra_for_longitude(lon: float):
     return NAKSHATRA_NAMES[idx], pada, lord
 
 
-def compute_birth_facts(dob_iso: str) -> dict:
+def compute_birth_facts(dob_iso: str, birth_dt_utc: datetime = None) -> dict:
     """
     dob_iso: "YYYY-MM-DD" (the format the frontend's date picker sends).
+    birth_dt_utc: optional exact birth moment as a naive UTC datetime. When
+        given (the person supplied a time of birth and the place could be
+        located), the Moon/Sun are evaluated at that exact moment instead of
+        the noon-UTC reference, and the "uncertain" flags are False.
 
     Returns real, computed facts:
       moon_rashi, moon_rashi_index, sun_rashi, sun_rashi_index, nakshatra,
       nakshatra_index, nakshatra_pada, nakshatra_lord,
       moon_sign_uncertain, nakshatra_uncertain
     """
+    if birth_dt_utc is not None:
+        jd = _jd_from_utc(birth_dt_utc)
+        moon_lon = _sidereal_longitude(jd, swe.MOON)
+        sun_lon = _sidereal_longitude(jd, swe.SUN)
+        nak, pada, lord = _nakshatra_for_longitude(moon_lon)
+        return {
+            "moon_rashi": _rashi_for_longitude(moon_lon),
+            "moon_rashi_index": int(moon_lon // 30) % 12,
+            "sun_rashi": _rashi_for_longitude(sun_lon),
+            "sun_rashi_index": int(sun_lon // 30) % 12,
+            "nakshatra": nak,
+            "nakshatra_index": int(moon_lon // _NAKSHATRA_SPAN) % 27,
+            "nakshatra_pada": pada,
+            "nakshatra_lord": lord,
+            "moon_sign_uncertain": False,
+            "nakshatra_uncertain": False,
+        }
+
     year, month, day = (int(p) for p in dob_iso.split("-")[:3])
 
     jd_noon = swe.julday(year, month, day, 12.0)
@@ -379,7 +406,7 @@ def _current_mahadasha_lord(moon_lon: float, birth_dt: datetime, as_of: datetime
     return _find_current(_mahadashas(moon_lon, birth_dt), as_of)["lord"]
 
 
-def compute_dasha(dob_iso: str, as_of: datetime = None) -> dict:
+def compute_dasha(dob_iso: str, as_of: datetime = None, birth_dt_utc: datetime = None) -> dict:
     """
     Vimshottari Dasha for a birth date, evaluated at `as_of` (default:
     now, UTC). Returns the running Mahadasha, Antardasha and
@@ -387,14 +414,16 @@ def compute_dasha(dob_iso: str, as_of: datetime = None) -> dict:
     neighbouring Mahadashas.
     """
     year, month, day = (int(p) for p in dob_iso.split("-")[:3])
-    birth_dt = datetime(year, month, day, 12, 0)  # same 12:00 UTC reference as the Moon calc
+    exact = birth_dt_utc is not None
+    # Exact birth moment when known, else the same 12:00 UTC reference as the Moon calc.
+    birth_dt = birth_dt_utc if exact else datetime(year, month, day, 12, 0)
     if as_of is None:
         as_of = datetime.now(timezone.utc).replace(tzinfo=None)
     if as_of < birth_dt:
         as_of = birth_dt
 
-    jd_noon = swe.julday(year, month, day, 12.0)
-    moon_lon, _ = _sidereal_with_speed(jd_noon, swe.MOON)
+    jd_birth = _jd_from_utc(birth_dt)
+    moon_lon, _ = _sidereal_with_speed(jd_birth, swe.MOON)
 
     periods = _mahadashas(moon_lon, birth_dt)
     md = _find_current(periods, as_of)
@@ -416,10 +445,11 @@ def compute_dasha(dob_iso: str, as_of: datetime = None) -> dict:
 
     # Is the running Mahadasha itself sensitive to the (unknown) time of day?
     lords_seen = {md["lord"]}
-    for hour in (0.0, 23.99):
-        jd = swe.julday(year, month, day, hour)
-        lon, _ = _sidereal_with_speed(jd, swe.MOON)
-        lords_seen.add(_current_mahadasha_lord(lon, birth_dt, as_of))
+    if not exact:  # with an exact birth time there is no time-of-day ambiguity
+        for hour in (0.0, 23.99):
+            jd = swe.julday(year, month, day, hour)
+            lon, _ = _sidereal_with_speed(jd, swe.MOON)
+            lords_seen.add(_current_mahadasha_lord(lon, birth_dt, as_of))
 
     return {
         "as_of": _iso(as_of),
@@ -432,7 +462,46 @@ def compute_dasha(dob_iso: str, as_of: datetime = None) -> dict:
     }
 
 
-def compute_chart(dob_iso: str, birth_facts: dict, as_of: datetime = None) -> dict:
+def _lagna_sign_at(dt_utc: datetime, lat: float, lon: float) -> int:
+    _use_lahiri()
+    _cusps, ascmc = swe.houses_ex(_jd_from_utc(dt_utc), lat, lon, b"W", swe.FLG_SIDEREAL)
+    return int((ascmc[0] % 360.0) // 30) % 12
+
+
+def compute_lagna_window(birth_dt_utc: datetime, lat: float, lon: float, max_minutes: int = 360) -> dict:
+    """
+    How long the Ascendant sign stays the same around the birth moment:
+    minutes back to the previous sign change and forward to the next one
+    (searched minute by minute, capped at `max_minutes` each way). This
+    tells the person how precise their birth time needs to be: inside this
+    window every house number stays the same; outside it they all shift.
+    """
+    base = _lagna_sign_at(birth_dt_utc, lat, lon)
+
+    def scan(direction: int):
+        for minute in range(1, max_minutes + 1):
+            if _lagna_sign_at(birth_dt_utc + timedelta(minutes=direction * minute), lat, lon) != base:
+                return minute - 1, False
+        return max_minutes, True
+
+    before, before_capped = scan(-1)
+    after, after_capped = scan(+1)
+    return {
+        "minutes_before": before,
+        "minutes_after": after,
+        "before_capped": before_capped,
+        "after_capped": after_capped,
+    }
+
+
+def compute_chart(
+    dob_iso: str,
+    birth_facts: dict,
+    as_of: datetime = None,
+    birth_dt_utc: datetime = None,
+    lat: float = None,
+    lon: float = None,
+) -> dict:
     """
     Real sidereal positions (Lahiri) of Sun, Moon, Mars, Mercury, Jupiter,
     Venus, Saturn, Rahu and Ketu, the house each occupies (counted from
@@ -442,10 +511,33 @@ def compute_chart(dob_iso: str, birth_facts: dict, as_of: datetime = None) -> di
 
     `birth_facts` is the dict from compute_birth_facts(); its Moon sign is
     reused so the chart always agrees with the Rashi shown elsewhere.
+
+    TWO MODES
+      * Date only (default): planets at 12:00 UTC, houses counted from the
+        Moon sign (Chandra Lagna).
+      * Exact time + place (`birth_dt_utc`, `lat`, `lon` all given): planets
+        at the exact birth moment and houses counted from the true
+        Ascendant (Lagna, whole-sign houses, Lahiri) -- this is what a
+        normal Kundli shows.
     """
     year, month, day = (int(p) for p in dob_iso.split("-")[:3])
-    jd_noon = swe.julday(year, month, day, 12.0)
+    exact = birth_dt_utc is not None
+    jd_noon = _jd_from_utc(birth_dt_utc) if exact else swe.julday(year, month, day, 12.0)
+
+    lagna_sign = None
+    lagna_degree_text = None
+    lagna_window = None
+    if exact and lat is not None and lon is not None:
+        _use_lahiri()
+        _cusps, ascmc = swe.houses_ex(jd_noon, lat, lon, b"W", swe.FLG_SIDEREAL)
+        asc_lon = ascmc[0] % 360.0
+        lagna_sign = int(asc_lon // 30) % 12
+        lagna_degree_text = _fmt_degree(asc_lon % 30)
+        lagna_window = compute_lagna_window(birth_dt_utc, lat, lon)
+
+    # House 1 = the Ascendant's sign when known, else the Moon's sign.
     moon_sign = birth_facts["moon_rashi_index"]
+    reference_sign = lagna_sign if lagna_sign is not None else moon_sign
 
     longitudes = {}
     retro = {}
@@ -463,8 +555,7 @@ def compute_chart(dob_iso: str, birth_facts: dict, as_of: datetime = None) -> di
         lon = longitudes[name]
         sign_index = int(lon // 30) % 12
         deg_in_sign = lon % 30
-        # The Moon defines house 1, so its own sign always maps to house 1.
-        house = (sign_index - moon_sign) % 12 + 1
+        house = (sign_index - reference_sign) % 12 + 1
         traits = house_effects.get_traits(name, house)
         verdict = house_effects.verdict_for(traits)
         title, governs = house_effects.HOUSE_INFO[house]
@@ -488,7 +579,7 @@ def compute_chart(dob_iso: str, birth_facts: dict, as_of: datetime = None) -> di
             }
         )
 
-    dasha = compute_dasha(dob_iso, as_of)
+    dasha = compute_dasha(dob_iso, as_of, birth_dt_utc=birth_dt_utc)
 
     # Attach the Dasha lords' own placement quality: a running period is as
     # good or bad as the house its lord occupies in this chart.
@@ -507,7 +598,16 @@ def compute_chart(dob_iso: str, birth_facts: dict, as_of: datetime = None) -> di
         entry["lord_house"] = by_name[entry["lord"]]["house"]
 
     return {
-        "reference": "Chandra Lagna (houses counted from the Moon sign)",
+        "reference_type": "lagna" if lagna_sign is not None else "moon",
+        "reference": (
+            "Lagna (houses counted from the Ascendant)"
+            if lagna_sign is not None
+            else "Chandra Lagna (houses counted from the Moon sign)"
+        ),
+        "lagna": RASHI_NAMES[lagna_sign] if lagna_sign is not None else None,
+        "lagna_degree_text": lagna_degree_text,
+        "lagna_window": lagna_window,
+        "birth_time_used": exact,
         "moon_sign": RASHI_NAMES[moon_sign],
         "moon_sign_uncertain": bool(birth_facts.get("moon_sign_uncertain")),
         "planets": planets,

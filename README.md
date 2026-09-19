@@ -2,7 +2,7 @@
 
 A complete MVP web app that generates a personalized AI Vedic astrology
 (Kundli) report from a user's **name, date of birth, and place of birth**
-(no time of birth is collected). The user also uploads a face photo, which
+(time of birth is optional). The user also uploads a face photo, which
 is stored with their record in Supabase for reference — it is **not**
 analyzed by the AI model.
 
@@ -369,3 +369,24 @@ The report now contains two computed (never AI-generated) sections, placed right
 | `backend/chart_report.py` | Builds the two Markdown sections and the ground-truth facts given to Gemini. |
 
 Notes: houses are counted from the Moon sign (Chandra Lagna) because no birth time is collected. Dasha dates are approximate for the same reason. To put these sections behind the Rs 9 paywall, remove them from `ALWAYS_FULL_SECTIONS` in `report_utils.py`. The PDF always includes them.
+
+### Optional Time of Birth (true Ascendant)
+
+The form has an optional **Time of Birth** field.
+
+- **Left blank** (default): houses are counted from the Moon sign (Chandra Lagna), exactly as before.
+- **Filled in**: `backend/geo.py` looks up the birth place (free Open-Meteo geocoding API: coordinates plus IANA time zone), converts the local time to UTC using the historical offset for that date, and `astro_calc.py` then calculates the **true Ascendant (Lagna)**, exact planetary positions, and an exact-Moon Dasha. Houses are counted from the Ascendant, like a normal Kundli.
+- If the place can't be found or the lookup fails, the app silently falls back to the date-only chart and says so in the report. It never blocks report generation.
+- The time of birth is used only during generation. It is not stored in Supabase, so no database change is needed; the Ascendant-based report text is what gets stored and re-rendered into the PDF.
+- Tip: the place field works best as "City, State, Country" (e.g. `Cuttack, Odisha, India`).
+
+### Accuracy features around the birth time
+
+When a birth time is used, the result page shows an **Exact / Approximate** panel, and the report text adds:
+
+- **Which place was matched** (e.g. "Cuttack, Odisha, India") so a wrong same-name city is easy to spot. If several places share the name and the state/country didn't disambiguate, a warning is shown.
+- **The Ascendant window**: how long the Ascendant sign stays the same around the entered time (e.g. "Karka from 10:16 AM to 12:29 PM"). Inside the window every house number is stable; outside it they all shift.
+- **A boundary warning** when the time is within 10 minutes of an Ascendant sign change.
+
+Without a birth time the app cannot know the Ascendant (nothing in a date reveals the time of day), so it uses the standard fallback of counting houses from the Moon sign and labels the result "Approximate".
+

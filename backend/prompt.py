@@ -33,8 +33,10 @@ Pratyantardasha) that were calculated for you using real ephemeris data.
 These facts are ground truth and are NOT to be recalculated,
 second-guessed, rounded to a "nearby" sign, moved to a different house,
 or contradicted anywhere in the report — every section must stay
-internally consistent with them. Houses are counted from the Moon sign
-(Chandra Lagna), so never name or invent a separate Ascendant/Lagna sign.
+internally consistent with them. Houses are counted from the reference
+stated in the computed facts (the Ascendant/Lagna when it is given,
+otherwise the Moon sign, Chandra Lagna), so use only that reference and
+never name or invent a different Ascendant/Lagna sign.
 No exact time of birth, charts, images, or additional documents are
 available, so for everything the computed facts do NOT cover (yogas,
 Manglik intensity, lucky elements, etc.), reason using standard Vedic
@@ -79,7 +81,7 @@ Guidelines for content generation:
 2. **Basic Astrological Details**: Exactly THREE bullets, no more, no less, using the given computed values verbatim so they can be parsed programmatically: `- **Rashi (Moon Sign):** <SignName>`, then `- **Nakshatra:** <NakshatraName> (Pada <N>)`, then `- **Nakshatra Lord:** <Planet>`. Do NOT add any other bullets here (no Ascendant/Lagna, Karan, Yog, Varna, Paya, Gan, Yoni, Sun Rashi, Date of Birth, or Time of Birth — none of those belong in this section).
 3. **Life Challenges & Dasha Impact**: Focus on specific difficulties created during active Dasha/Antardasha phases across career, jobs, and overall life stress. Wrap every sentence that names a concrete difficulty/challenge/obstacle in `[[PROBLEM]] ... [[/PROBLEM]]`, and wrap every sentence offering a way through it in `[[SOLUTION]] ... [[/SOLUTION]]`.
 4. **Career & Job Analysis**: Specific analysis of career trajectory, ideal sectors, and timing of growth or hurdles. Wrap sentences describing career obstacles/setbacks in `[[PROBLEM]] ... [[/PROBLEM]]`, and sentences describing the recommended action/timing to overcome them in `[[SOLUTION]] ... [[/SOLUTION]]`.
-5. **Birth Chart (D1) Overview**: Narrate the planetary placements exactly as given in the computed facts (which planet sits in which sign and house, counted from the Moon sign) — including the Mars position, the Rahu/Ketu axis and Saturn's placement. Do not move any planet to a different house or sign, and do not name an Ascendant/Lagna sign. Keep the tone of each planet consistent with its given rating (favourable / challenging / mixed).
+5. **Birth Chart (D1) Overview**: Narrate the planetary placements exactly as given in the computed facts (which planet sits in which sign and house, counted from the reference stated there) — including the Mars position, the Rahu/Ketu axis and Saturn's placement. Do not move any planet to a different house or sign, and do not name an Ascendant/Lagna sign other than the one given (if any). Keep the tone of each planet consistent with its given rating (favourable / challenging / mixed).
 6. **Favorable Points**: List favorable elements including Name/Destiny/Radical Numbers, Radical Ruler, Favorable God, Mantra, Colors, Metals, Stone/Sub-stone, and Days.
 7. **Vimshottari Dasha Analysis**: Explain the running Maha Dasha, Antardasha and Pratyantardasha exactly as given in the computed facts (same planets, same dates), describing how each period lord's house placement colours the period. Do not substitute different planets or dates.
 8. **Personality & Core Traits**: Blend astrological traits derived from the chart into a rich personality profile.
