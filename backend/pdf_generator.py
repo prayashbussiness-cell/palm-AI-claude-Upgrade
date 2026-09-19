@@ -8,6 +8,10 @@ control over typography, margins, headers, footers, and page numbers.
 The markdown contains [[PROBLEM]]...[[/PROBLEM]] / [[SOLUTION]]...[[/SOLUTION]]
 markers around key sentences; these are rendered in red / green respectively
 so the paid PDF visually matches the free teaser preview.
+
+The planetary-position and Dasha sections (chart_report.py) also use
+[[GOOD]] (green), [[BAD]] (red) and [[MIXED]] (amber) markers, "### "
+sub-headings and "| a | b |" tables; all three are handled below.
 """
 
 import os
@@ -36,11 +40,16 @@ TEXT_COLOR = colors.HexColor("#2B2140")
 MUTED_COLOR = colors.HexColor("#6B7280")
 PROBLEM_COLOR = colors.HexColor("#B91C1C")
 SOLUTION_COLOR = colors.HexColor("#15803D")
+MIXED_COLOR = colors.HexColor("#B45309")
 
 FOOTER_TEXT = "AI Vedic Astrology Report"
 
 PROBLEM_RE = re.compile(r"\[\[PROBLEM\]\](.*?)\[\[/PROBLEM\]\]", re.DOTALL)
 SOLUTION_RE = re.compile(r"\[\[SOLUTION\]\](.*?)\[\[/SOLUTION\]\]", re.DOTALL)
+GOOD_RE = re.compile(r"\[\[GOOD\]\](.*?)\[\[/GOOD\]\]", re.DOTALL)
+BAD_RE = re.compile(r"\[\[BAD\]\](.*?)\[\[/BAD\]\]", re.DOTALL)
+MIXED_RE = re.compile(r"\[\[MIXED\]\](.*?)\[\[/MIXED\]\]", re.DOTALL)
+_TABLE_SEPARATOR_RE = re.compile(r"^:?-{2,}:?$")
 
 
 def _slugify(name: str) -> str:
@@ -83,6 +92,36 @@ def _build_styles():
             textColor=PRIMARY_COLOR,
             spaceBefore=16,
             spaceAfter=6,
+        )
+    )
+    styles.add(
+        ParagraphStyle(
+            name="SubHeading",
+            fontName="Helvetica-Bold",
+            fontSize=11.5,
+            leading=15,
+            textColor=TEXT_COLOR,
+            spaceBefore=10,
+            spaceAfter=4,
+            keepWithNext=1,
+        )
+    )
+    styles.add(
+        ParagraphStyle(
+            name="TableCell",
+            fontName="Helvetica",
+            fontSize=9.5,
+            leading=12,
+            textColor=TEXT_COLOR,
+        )
+    )
+    styles.add(
+        ParagraphStyle(
+            name="TableHead",
+            fontName="Helvetica-Bold",
+            fontSize=9.5,
+            leading=12,
+            textColor=colors.white,
         )
     )
     styles.add(
@@ -144,9 +183,55 @@ def _inline_markdown_to_html(text: str) -> str:
     text = SOLUTION_RE.sub(
         r'<font color="#15803D"><b>\1</b></font>', text
     )
+    text = GOOD_RE.sub(r'<font color="#15803D"><b>\1</b></font>', text)
+    text = BAD_RE.sub(r'<font color="#B91C1C"><b>\1</b></font>', text)
+    text = MIXED_RE.sub(r'<font color="#B45309"><b>\1</b></font>', text)
     text = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", text)
     text = re.sub(r"(?<!\*)\*(?!\*)(.+?)\*(?!\*)", r"<i>\1</i>", text)
     return text
+
+
+def _table_flowable(rows: list, styles):
+    """Render '| a | b |' rows as a striped ReportLab table (coloured text
+    inside cells comes from the [[GOOD]]/[[BAD]]/[[MIXED]] markers)."""
+    parsed = []
+    for row in rows:
+        cells = [c.strip() for c in row.strip().strip("|").split("|")]
+        if cells and all(_TABLE_SEPARATOR_RE.match(c) for c in cells):
+            continue
+        parsed.append(cells)
+    if len(parsed) < 1:
+        return None
+
+    n_cols = len(parsed[0])
+    data = []
+    for r_i, cells in enumerate(parsed):
+        cells = (cells + [""] * n_cols)[:n_cols]
+        style = styles["TableHead"] if r_i == 0 else styles["TableCell"]
+        data.append([Paragraph(_inline_markdown_to_html(c), style) for c in cells])
+
+    total_w = 170 * mm
+    if n_cols == 4:
+        col_widths = [28 * mm, 66 * mm, 24 * mm, 52 * mm]
+    else:
+        col_widths = [total_w / n_cols] * n_cols
+
+    table = Table(data, colWidths=col_widths, repeatRows=1)
+    table.setStyle(
+        TableStyle(
+            [
+                ("BACKGROUND", (0, 0), (-1, 0), PRIMARY_COLOR),
+                ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#F5F3FF")]),
+                ("BOX", (0, 0), (-1, -1), 0.5, colors.HexColor("#E5E7EB")),
+                ("INNERGRID", (0, 0), (-1, -1), 0.25, colors.HexColor("#E5E7EB")),
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ("TOPPADDING", (0, 0), (-1, -1), 5),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+                ("LEFTPADDING", (0, 0), (-1, -1), 6),
+            ]
+        )
+    )
+    return table
 
 
 def _parse_markdown_to_flowables(markdown_text: str, styles) -> list:
@@ -160,6 +245,15 @@ def _parse_markdown_to_flowables(markdown_text: str, styles) -> list:
     lines = markdown_text.splitlines()
 
     buffer_paragraph = []
+    table_rows = []
+
+    def flush_table():
+        if table_rows:
+            table = _table_flowable(table_rows, styles)
+            if table is not None:
+                flowables.append(table)
+                flowables.append(Spacer(1, 3 * mm))
+            table_rows.clear()
 
     def flush_paragraph():
         if buffer_paragraph:
@@ -173,8 +267,21 @@ def _parse_markdown_to_flowables(markdown_text: str, styles) -> list:
     for raw_line in lines:
         line = raw_line.strip()
 
+        if line.startswith("|"):
+            flush_paragraph()
+            table_rows.append(line)
+            continue
+        flush_table()
+
         if not line:
             flush_paragraph()
+            continue
+
+        if line.startswith("### "):
+            flush_paragraph()
+            flowables.append(
+                Paragraph(_inline_markdown_to_html(line[4:].strip()), styles["SubHeading"])
+            )
             continue
 
         if line.startswith("## "):
@@ -208,6 +315,7 @@ def _parse_markdown_to_flowables(markdown_text: str, styles) -> list:
         buffer_paragraph.append(line)
 
     flush_paragraph()
+    flush_table()
     return flowables
 
 
@@ -309,8 +417,9 @@ def generate_pdf(
 
     # Small legend explaining the red/green highlighting used throughout.
     legend = (
-        '<font color="#B91C1C"><b>&#9632;</b></font> Problem areas identified in your chart &nbsp;&nbsp; '
-        '<font color="#15803D"><b>&#9632;</b></font> Recommended solutions &amp; remedies'
+        '<font color="#B91C1C"><b>&#9632;</b></font> Problem / challenging placement &nbsp;&nbsp; '
+        '<font color="#15803D"><b>&#9632;</b></font> Solution / favourable placement &nbsp;&nbsp; '
+        '<font color="#B45309"><b>&#9632;</b></font> Mixed'
     )
     story.append(Paragraph(legend, styles["ReportSubtitle"]))
     story.append(Spacer(1, 4 * mm))

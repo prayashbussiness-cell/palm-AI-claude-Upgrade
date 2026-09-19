@@ -15,6 +15,16 @@ Turns the raw Gemini markdown (which contains "## Section" headings,
 Only sections 8-12 and 14 of the prompt (Life Challenges, Manglik &
 Relationship, Career, Financial, Health, Remedies) are expected to
 contain markers, but the parser handles them appearing anywhere.
+
+The backend-generated "Planetary Positions & House Effects" and "Current
+Dasha Period" sections (see chart_report.py) additionally use:
+
+    [[GOOD]]...[[/GOOD]]   -> green (favourable / advantage)
+    [[BAD]]...[[/BAD]]     -> red   (challenging / disadvantage)
+    [[MIXED]]...[[/MIXED]] -> amber (mixed / conditional)
+
+plus "### " sub-headings (rendered as colour-coded cards, the colour taken
+from the marker in the heading) and "| a | b |" tables.
 """
 
 import html
@@ -24,7 +34,11 @@ from typing import List, Optional, Tuple
 
 PROBLEM_RE = re.compile(r"\[\[PROBLEM\]\](.*?)\[\[/PROBLEM\]\]", re.DOTALL)
 SOLUTION_RE = re.compile(r"\[\[SOLUTION\]\](.*?)\[\[/SOLUTION\]\]", re.DOTALL)
-ANY_MARKER_RE = re.compile(r"\[\[/?(?:PROBLEM|SOLUTION)\]\]")
+GOOD_RE = re.compile(r"\[\[GOOD\]\](.*?)\[\[/GOOD\]\]", re.DOTALL)
+BAD_RE = re.compile(r"\[\[BAD\]\](.*?)\[\[/BAD\]\]", re.DOTALL)
+MIXED_RE = re.compile(r"\[\[MIXED\]\](.*?)\[\[/MIXED\]\]", re.DOTALL)
+ANY_MARKER_RE = re.compile(r"\[\[/?(?:PROBLEM|SOLUTION|GOOD|BAD|MIXED)\]\]")
+STATUS_RE = re.compile(r"\[\[(GOOD|BAD|MIXED)\]\]")
 
 RASHI_RE = re.compile(
     r"\*\*Rashi\s*\(Moon Sign\):?\*\*\s*:?\s*([A-Za-z][A-Za-z \-']*)",
@@ -80,6 +94,15 @@ def _split_blocks(markdown_text: str) -> List[Block]:
             current_section = line[3:].strip().lower()
             blocks.append(Block("heading", line[3:].strip(), current_section, 0))
             continue
+        if line.startswith("### "):
+            flush()
+            text = line[4:].strip()
+            blocks.append(Block("subheading", text, current_section, _plain_length(text)))
+            continue
+        if line.startswith("|"):
+            flush()
+            blocks.append(Block("table_row", line, current_section, _plain_length(line)))
+            continue
         if line.startswith(("- ", "* ")):
             flush()
             text = line[2:].strip()
@@ -93,8 +116,8 @@ def _split_blocks(markdown_text: str) -> List[Block]:
 
 def strip_markers(text: str) -> str:
     """Remove [[PROBLEM]]/[[SOLUTION]] wrapper tags, keeping inner text."""
-    text = PROBLEM_RE.sub(lambda m: m.group(1), text)
-    text = SOLUTION_RE.sub(lambda m: m.group(1), text)
+    for pattern in (PROBLEM_RE, SOLUTION_RE, GOOD_RE, BAD_RE, MIXED_RE):
+        text = pattern.sub(lambda m: m.group(1), text)
     return text
 
 
@@ -109,16 +132,80 @@ def _inline_html(text: str) -> str:
     escaped = SOLUTION_RE.sub(
         r'<span class="mark mark-solution">\1</span>', escaped
     )
+    escaped = GOOD_RE.sub(r'<span class="mark mark-good">\1</span>', escaped)
+    escaped = BAD_RE.sub(r'<span class="mark mark-bad">\1</span>', escaped)
+    escaped = MIXED_RE.sub(r'<span class="mark mark-mixed">\1</span>', escaped)
     escaped = re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", escaped)
     return escaped
 
 
+def _status_of(text: str) -> str:
+    """'good' | 'bad' | 'mixed' | 'neutral', from the first colour marker in text."""
+    m = STATUS_RE.search(text)
+    return m.group(1).lower() if m else "neutral"
+
+
+_TABLE_SEPARATOR_RE = re.compile(r"^:?-{2,}:?$")
+
+
+def _table_html(rows: List[str]) -> str:
+    """Render consecutive '| a | b |' lines as a scroll-safe HTML table."""
+    parsed = []
+    for row in rows:
+        cells = [c.strip() for c in row.strip().strip("|").split("|")]
+        if cells and all(_TABLE_SEPARATOR_RE.match(c) for c in cells):
+            continue  # the |---|---| divider line
+        parsed.append(cells)
+    if not parsed:
+        return ""
+
+    head, body = parsed[0], parsed[1:]
+    out = ['<div class="table-wrap"><table class="chart-table">', "<thead><tr>"]
+    out += [f"<th>{_inline_html(c)}</th>" for c in head]
+    out.append("</tr></thead><tbody>")
+    for cells in body:
+        out.append("<tr>" + "".join(f"<td>{_inline_html(c)}</td>" for c in cells) + "</tr>")
+    out.append("</tbody></table></div>")
+    return "".join(out)
+
+
 def blocks_to_html(blocks: List[Block]) -> str:
-    """Render a list of Blocks to HTML, wrapping consecutive bullets in <ul>."""
+    """
+    Render a list of Blocks to HTML. Consecutive bullets are wrapped in
+    <ul>, consecutive table rows in one <table>, and each "###" sub-heading
+    opens a colour-coded card (green / red / amber, from its marker) that
+    holds the bullets underneath it.
+    """
     html_parts: List[str] = []
     in_list = False
+    in_card = False
+    table_rows: List[str] = []
+
+    def close_list():
+        nonlocal in_list
+        if in_list:
+            html_parts.append("</ul>")
+            in_list = False
+
+    def close_card():
+        nonlocal in_card
+        close_list()
+        if in_card:
+            html_parts.append("</div>")
+            in_card = False
+
+    def flush_table():
+        if table_rows:
+            html_parts.append(_table_html(table_rows))
+            table_rows.clear()
 
     for block in blocks:
+        if block.kind == "table_row":
+            close_card()
+            table_rows.append(block.text)
+            continue
+        flush_table()
+
         if block.kind == "bullet":
             if not in_list:
                 html_parts.append("<ul>")
@@ -126,17 +213,23 @@ def blocks_to_html(blocks: List[Block]) -> str:
             html_parts.append(f"<li>{_inline_html(block.text)}</li>")
             continue
 
-        if in_list:
-            html_parts.append("</ul>")
-            in_list = False
+        close_list()
 
-        if block.kind == "heading":
+        if block.kind == "subheading":
+            close_card()
+            status = _status_of(block.text)
+            html_parts.append(f'<div class="chart-card chart-card-{status}">')
+            html_parts.append(f"<h4>{_inline_html(block.text)}</h4>")
+            in_card = True
+        elif block.kind == "heading":
+            close_card()
             html_parts.append(f"<h3>{html.escape(block.text)}</h3>")
         else:
+            close_card()
             html_parts.append(f"<p>{_inline_html(block.text)}</p>")
 
-    if in_list:
-        html_parts.append("</ul>")
+    flush_table()
+    close_card()
 
     return "\n".join(html_parts)
 
@@ -227,7 +320,17 @@ def insert_section_after(markdown_text: str, after_heading: str, section_markdow
 
 
 # Sections always shown in full in the free teaser (no markers expected).
-ALWAYS_FULL_SECTIONS = {"executive summary", "basic astrological details", "astrological score"}
+# To put the planet/Dasha detail behind the Rs 9 paywall instead, simply
+# remove "planetary positions & house effects" and "current dasha period"
+# from this set -- they will then be counted in the ~30% teaser budget (and
+# still always appear in full in the PDF).
+ALWAYS_FULL_SECTIONS = {
+    "executive summary",
+    "basic astrological details",
+    "astrological score",
+    "planetary positions & house effects",
+    "current dasha period",
+}
 
 TEASER_RATIO = 0.30
 

@@ -22,6 +22,8 @@
   --problem-bg: rgba(241, 116, 107, 0.14);
   --solution: #6fd79a;
   --solution-bg: rgba(111, 215, 154, 0.14);
+  --mixed: #f0b95c;
+  --mixed-bg: rgba(240, 185, 92, 0.14);
   --radius-lg: 22px;
   --radius-md: 14px;
   --radius-sm: 9px;
@@ -700,7 +702,8 @@ input.invalid {
 
 .teaser-legend {
   display: flex;
-  gap: 18px;
+  flex-wrap: wrap;
+  gap: 8px 18px;
   justify-content: center;
   margin-bottom: 14px;
 }
@@ -726,6 +729,10 @@ input.invalid {
 
 .legend-solution {
   background: var(--solution);
+}
+
+.legend-mixed {
+  background: var(--mixed);
 }
 
 .teaser-content {
@@ -776,6 +783,177 @@ input.invalid {
 .teaser-content .mark-solution {
   background: var(--solution-bg);
   color: var(--solution);
+}
+
+/* Planet / house / Dasha placements: green = favourable, red = challenging,
+   amber = mixed. */
+.teaser-content .mark-good {
+  background: var(--solution-bg);
+  color: var(--solution);
+}
+
+.teaser-content .mark-bad {
+  background: var(--problem-bg);
+  color: var(--problem);
+}
+
+.teaser-content .mark-mixed {
+  background: var(--mixed-bg);
+  color: var(--mixed);
+}
+
+/* ---------------------- Planet & Dasha cards / table ---------------------- */
+
+.teaser-content .chart-card {
+  border: 1px solid rgba(212, 175, 106, 0.18);
+  border-left-width: 4px;
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, 0.025);
+  padding: 10px 14px 4px;
+  margin: 0 0 10px;
+}
+
+.teaser-content .chart-card-good {
+  border-left-color: var(--solution);
+}
+
+.teaser-content .chart-card-bad {
+  border-left-color: var(--problem);
+}
+
+.teaser-content .chart-card-mixed {
+  border-left-color: var(--mixed);
+}
+
+.teaser-content .chart-card-neutral {
+  border-left-color: var(--gold);
+}
+
+.teaser-content .chart-card h4 {
+  margin: 0 0 6px;
+  font-size: 0.95rem;
+  font-weight: 600;
+  line-height: 1.5;
+  color: var(--ink);
+}
+
+.teaser-content .chart-card ul {
+  margin: 0 0 6px;
+  padding-left: 18px;
+  font-size: 0.88rem;
+  line-height: 1.6;
+}
+
+.teaser-content .table-wrap {
+  overflow-x: auto;
+  margin: 0 0 14px;
+  -webkit-overflow-scrolling: touch;
+}
+
+.teaser-content .chart-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.86rem;
+}
+
+.teaser-content .chart-table th {
+  text-align: left;
+  font-weight: 600;
+  color: var(--gold-bright);
+  border-bottom: 1px solid rgba(212, 175, 106, 0.35);
+  padding: 7px 8px;
+  white-space: nowrap;
+}
+
+.teaser-content .chart-table td {
+  border-bottom: 1px solid rgba(212, 175, 106, 0.12);
+  padding: 7px 8px;
+  vertical-align: middle;
+}
+
+/* House number + Result (green/red/amber) must never wrap or get cut off. */
+.teaser-content .chart-table td:nth-child(3),
+.teaser-content .chart-table td:nth-child(4) {
+  white-space: nowrap;
+}
+
+/* NOTE: the media queries below must stay AFTER the base table rules above,
+   otherwise the base rules win at equal specificity. */
+@media (max-width: 560px) {
+  .teaser-content {
+    padding: 14px 12px;
+  }
+
+  .teaser-content .chart-table {
+    font-size: 0.78rem;
+  }
+
+  .teaser-content .chart-table th,
+  .teaser-content .chart-table td {
+    padding: 6px 3px;
+  }
+
+  .teaser-content .chart-table .mark {
+    padding: 1px 4px;
+  }
+}
+
+/* Very narrow phones: reflow each table row into two short lines
+   (Planet + House / Sign + Result) so the green/red Result is never
+   cut off. Written for the 4-column planet table
+   (Planet | Sign | House | Result). */
+@media (max-width: 440px) {
+  .teaser-content .chart-table thead {
+    display: none;
+  }
+
+  .teaser-content .chart-table,
+  .teaser-content .chart-table tbody {
+    display: block;
+  }
+
+  .teaser-content .chart-table tr {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 2px 10px;
+    padding: 8px 2px;
+    border-bottom: 1px solid rgba(212, 175, 106, 0.12);
+  }
+
+  .teaser-content .chart-table td {
+    display: block;
+    padding: 0;
+    border: 0;
+  }
+
+  .teaser-content .chart-table td:nth-child(1) {
+    grid-column: 1;
+    grid-row: 1;
+    font-weight: 600;
+  }
+
+  .teaser-content .chart-table td:nth-child(2) {
+    grid-column: 1;
+    grid-row: 2;
+    color: var(--ink-muted);
+  }
+
+  .teaser-content .chart-table td:nth-child(3) {
+    grid-column: 2;
+    grid-row: 1;
+    text-align: right;
+  }
+
+  .teaser-content .chart-table td:nth-child(3)::before {
+    content: "House ";
+    color: var(--ink-muted);
+  }
+
+  .teaser-content .chart-table td:nth-child(4) {
+    grid-column: 2;
+    grid-row: 2;
+    text-align: right;
+  }
 }
 
 /* ---------------------------------- Locked notice ----------------------------- */

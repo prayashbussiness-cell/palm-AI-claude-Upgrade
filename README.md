@@ -351,3 +351,21 @@ at startup.
   through `/download.html` → `/download/lookup`, which finds the report by
   email + phone in Supabase and regenerates the PDF from the stored report
   text if the original file is gone.
+
+
+---
+
+## 10. Planetary positions, house effects & current Dasha
+
+The report now contains two computed (never AI-generated) sections, placed right after "Astrological Score":
+
+- **Planetary Positions & House Effects**: sign, degree and house of Sun, Moon, Mars, Mercury, Jupiter, Venus, Saturn, Rahu and Ketu, plus the advantages / disadvantages of each placement. Green = favourable, red = challenging, amber = mixed.
+- **Current Dasha Period**: running Mahadasha, Antardasha and Pratyantardasha (with dates), each coloured by the house its planet occupies, plus a Mahadasha timeline.
+
+| File | Role |
+| --- | --- |
+| `backend/house_effects.py` | The "Planets in Houses" table as data. Edit wording or re-classify a trait here (`+` advantage, `-` disadvantage, `~` mixed). |
+| `backend/astro_calc.py` | `compute_chart()` and `compute_dasha()` (Swiss Ephemeris, Lahiri). |
+| `backend/chart_report.py` | Builds the two Markdown sections and the ground-truth facts given to Gemini. |
+
+Notes: houses are counted from the Moon sign (Chandra Lagna) because no birth time is collected. Dasha dates are approximate for the same reason. To put these sections behind the Rs 9 paywall, remove them from `ALWAYS_FULL_SECTIONS` in `report_utils.py`. The PDF always includes them.

@@ -46,6 +46,7 @@ try:
     import store
     import payments
     import astro_calc
+    import chart_report
 except ImportError:
     # Works when the app is run from the repo root (uvicorn backend.main:app),
     # i.e. when Root Directory is unset/empty.
@@ -55,6 +56,7 @@ except ImportError:
     from backend import store
     from backend import payments
     from backend import astro_calc
+    from backend import chart_report
 
 # ---------------------------------------------------------------------------
 # Setup
@@ -227,7 +229,9 @@ async def _save_upload(file: UploadFile, prefix: str) -> str:
     return filepath
 
 
-async def generate_astrology_report(name: str, dob: str, place: str, birth_facts: dict) -> str:
+async def generate_astrology_report(
+    name: str, dob: str, place: str, birth_facts: dict, chart_facts: str = ""
+) -> str:
     """
     Calls the Gemini API using the person's name, date of birth, place of
     birth (no time of birth, no images), and the astronomically-computed
@@ -242,7 +246,9 @@ async def generate_astrology_report(name: str, dob: str, place: str, birth_facts
             "Set it in your .env file (or Render environment variables) before starting the backend."
         )
 
-    user_prompt = build_user_prompt(name=name, dob=dob, place=place, birth_facts=birth_facts)
+    user_prompt = build_user_prompt(
+        name=name, dob=dob, place=place, birth_facts=birth_facts, chart_facts=chart_facts
+    )
 
     response = gemini_client.models.generate_content(
         model=GEMINI_MODEL,
@@ -420,6 +426,18 @@ async def analyze(
                 detail="Couldn't parse that date of birth. Please pick it from the calendar and try again.",
             ) from exc
 
+        # --- Real planetary positions (Sun..Ketu), their houses (counted
+        # from the Moon sign), the advantages/disadvantages of each
+        # placement, and the running Vimshottari Dasha. Best-effort: if this
+        # ever fails, the rest of the report is still generated without it.
+        chart = None
+        chart_facts = ""
+        try:
+            chart = astro_calc.compute_chart(dob.strip(), birth_facts)
+            chart_facts = chart_report.build_prompt_facts(chart)
+        except Exception:
+            logger.exception("Planetary chart / Dasha calculation failed for dob=%s", dob)
+
         # --- Generate report via Gemini (name + dob + place + computed facts) ---
         try:
             report_markdown = await generate_astrology_report(
@@ -427,6 +445,7 @@ async def analyze(
                 dob=dob.strip(),
                 place=place.strip(),
                 birth_facts=birth_facts,
+                chart_facts=chart_facts,
             )
         except Exception as exc:
             logger.exception("Gemini generation failed")
@@ -455,6 +474,21 @@ async def analyze(
         report_markdown = report_utils.insert_section_after(
             report_markdown, "Basic Astrological Details", score_markdown
         )
+
+        # --- Planetary positions + house effects (green/red/amber) and the
+        # current Dasha, also computed (never AI-generated), spliced in right
+        # after the Astrological Score. ---
+        if chart is not None:
+            report_markdown = report_utils.insert_section_after(
+                report_markdown,
+                "Astrological Score",
+                chart_report.build_planets_section(chart),
+            )
+            report_markdown = report_utils.insert_section_after(
+                report_markdown,
+                chart_report.PLANETS_HEADING,
+                chart_report.build_dasha_section(chart),
+            )
 
         issues = report_utils.detect_issue_chips(report_markdown)
         teaser_html, truncated = report_utils.build_teaser_html(report_markdown)
